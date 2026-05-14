@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,12 +27,19 @@ public:
     bool Init(const MysqlRuntimeConfig& cfg, std::string* err);
     Lease Acquire();
     void Release(const Lease& lease);
+    bool ExecuteSql(const Lease& lease, const std::string& sql, std::vector<std::string>* out_lines, std::string* err) const;
+    bool ExecuteSql(const std::string& sql, std::vector<std::string>* out_lines, std::string* err) const;
     bool enabled() const;
     int size() const;
 
 private:
+    static std::string EscapeForDoubleQuotedShell(const std::string& input);
+    bool RunMysqlCli(const std::string& sql, std::vector<std::string>* out_lines, std::string* err) const;
+
+private:
     mutable std::mutex mu_;
     bool enabled_ = false;
+    MysqlRuntimeConfig cfg_;
     std::vector<bool> in_use_;
 };
 

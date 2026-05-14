@@ -6,6 +6,7 @@
 
 #include "service/login/auth_token_service.h"
 #include "service/player/player_manager.h"
+#include "service/redis/redis_optional_store.h"
 #include "service/session/session_manager.h"
 
 namespace ddz {
@@ -40,8 +41,14 @@ struct LoginResult {
 
 class LoginService {
 public:
-    LoginService(SessionManager& session_manager, PlayerManager& player_manager, AuthTokenService& auth_token_service)
-        : session_manager_(session_manager), player_manager_(player_manager), auth_token_service_(auth_token_service) {}
+    LoginService(SessionManager& session_manager,
+                 PlayerManager& player_manager,
+                 AuthTokenService& auth_token_service,
+                 RedisOptionalStore* redis_store = nullptr)
+        : session_manager_(session_manager),
+          player_manager_(player_manager),
+          auth_token_service_(auth_token_service),
+          redis_store_(redis_store) {}
 
     LoginResult HandleLogin(int64_t connection_id, const std::string& request_body, int64_t now_ms);
 
@@ -52,6 +59,7 @@ private:
     SessionManager& session_manager_;
     PlayerManager& player_manager_;
     AuthTokenService& auth_token_service_;
+    RedisOptionalStore* redis_store_ = nullptr;
 };
 
 }  // namespace ddz

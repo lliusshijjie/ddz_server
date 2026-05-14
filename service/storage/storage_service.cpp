@@ -11,7 +11,13 @@ bool StorageService::Init(const AppConfig& config, std::string* err) {
     mysql_cfg.password = config.mysql.password;
     mysql_cfg.database = config.mysql.database;
     mysql_cfg.pool_size = config.mysql.pool_size;
-    return mysql_pool_.Init(mysql_cfg, err);
+    if (!mysql_pool_.Init(mysql_cfg, err)) {
+        return false;
+    }
+    player_dao_.BindPool(&mysql_pool_);
+    game_record_dao_.BindPool(&mysql_pool_);
+    coin_log_dao_.BindPool(&mysql_pool_);
+    return true;
 }
 
 int64_t StorageService::SaveGameRecord(const GameRecord& record) {
@@ -53,12 +59,88 @@ bool StorageService::PersistSettlementTransaction(const SettlementPersistRequest
         return false;
     }
 
-    const auto lease = mysql_pool_.Acquire();
-    if (!lease.valid) {
-        if (err != nullptr) {
-            *err = "mysql pool exhausted";
+    const bool mysql_enabled = mysql_pool_.enabled();
+    MySqlConnectionPool::Lease lease;
+    if (mysql_enabled) {
+        lease = mysql_pool_.Acquire();
+        if (!lease.valid) {
+            if (err != nullptr) {
+                *err = "mysql pool exhausted";
+            }
+            return false;
         }
-        return false;
+    }
+
+    if (mysql_enabled) {
+        auto join_players_csv = [](const std::vector<int64_t>& players) {
+            std::string out;
+            for (size_t i = 0; i < players.size(); ++i) {
+                if (i > 0) {
+                    out.push_back(',');
+                }
+                out += std::to_string(players[i]);
+            }
+            return out;
+        };
+
+        std::string sql;
+        sql += "START TRANSACTION;";
+        sql += "INSERT INTO game_record(room_id, game_mode, winner_player_id, started_at_ms, ended_at_ms, players_csv) VALUES(" +
+               std::to_string(req.room_id) + "," +
+               std::to_string(req.game_mode) + "," +
+               std::to_string(req.winner_player_id) + "," +
+               std::to_string(req.started_at_ms) + "," +
+               std::to_string(req.ended_at_ms) + ",'" + join_players_csv(req.players) + "');";
+        sql += "SET @rid = LAST_INSERT_ID();";
+        if (failpoint_ == StorageTxFailpoint::AfterRecordInserted) {
+            sql += "INSERT INTO __ddz_failpoint_after_record__(id) VALUES (1);";
+        }
+        for (size_t i = 0; i < req.coin_changes.size(); ++i) {
+            const auto& c = req.coin_changes[i];
+            sql += "INSERT INTO coin_log(player_id, room_id, change_amount, before_coin, after_coin, created_at_ms) VALUES(" +
+                   std::to_string(c.player_id) + "," +
+                   std::to_string(c.room_id) + "," +
+                   std::to_string(c.delta) + "," +
+                   std::to_string(c.before_coin) + "," +
+                   std::to_string(c.after_coin) + "," +
+                   std::to_string(req.ended_at_ms) + ");";
+            if (failpoint_ == StorageTxFailpoint::AfterFirstCoinLogInserted && i == 0) {
+                sql += "INSERT INTO __ddz_failpoint_after_coin_log__(id) VALUES (1);";
+            }
+            sql += "INSERT INTO player(player_id, coin, updated_at_ms) VALUES(" +
+                   std::to_string(c.player_id) + "," +
+                   std::to_string(c.after_coin) + "," +
+                   std::to_string(req.ended_at_ms) + ") "
+                   "ON DUPLICATE KEY UPDATE coin=VALUES(coin), updated_at_ms=VALUES(updated_at_ms);";
+        }
+        sql += "COMMIT;";
+        sql += "SELECT @rid;";
+
+        std::vector<std::string> lines;
+        if (!mysql_pool_.ExecuteSql(lease, sql, &lines, err)) {
+            mysql_pool_.Release(lease);
+            return false;
+        }
+        if (lines.empty()) {
+            mysql_pool_.Release(lease);
+            if (err != nullptr) {
+                *err = "mysql tx no record id returned";
+            }
+            return false;
+        }
+        try {
+            if (out_record_id != nullptr) {
+                *out_record_id = std::stoll(lines.back());
+            }
+        } catch (...) {
+            mysql_pool_.Release(lease);
+            if (err != nullptr) {
+                *err = "parse mysql record id failed";
+            }
+            return false;
+        }
+        mysql_pool_.Release(lease);
+        return true;
     }
 
     std::vector<int64_t> inserted_coin_log_ids;
@@ -91,7 +173,6 @@ bool StorageService::PersistSettlementTransaction(const SettlementPersistRequest
     record.players = req.players;
     inserted_record_id = game_record_dao_.Insert(record);
     if (inserted_record_id <= 0) {
-        mysql_pool_.Release(lease);
         if (err != nullptr) {
             *err = "insert game record failed";
         }
@@ -99,7 +180,6 @@ bool StorageService::PersistSettlementTransaction(const SettlementPersistRequest
     }
     if (failpoint_ == StorageTxFailpoint::AfterRecordInserted) {
         rollback();
-        mysql_pool_.Release(lease);
         if (err != nullptr) {
             *err = "tx failpoint after record inserted";
         }
@@ -111,7 +191,6 @@ bool StorageService::PersistSettlementTransaction(const SettlementPersistRequest
         old_player_coins.push_back({c.player_id, player_dao_.GetCoin(c.player_id)});
         if (!player_dao_.UpsertCoin(c.player_id, c.after_coin)) {
             rollback();
-            mysql_pool_.Release(lease);
             if (err != nullptr) {
                 *err = "upsert player coin failed";
             }
@@ -128,7 +207,6 @@ bool StorageService::PersistSettlementTransaction(const SettlementPersistRequest
         const int64_t log_id = coin_log_dao_.Insert(log);
         if (log_id <= 0) {
             rollback();
-            mysql_pool_.Release(lease);
             if (err != nullptr) {
                 *err = "insert coin log failed";
             }
@@ -138,7 +216,6 @@ bool StorageService::PersistSettlementTransaction(const SettlementPersistRequest
 
         if (failpoint_ == StorageTxFailpoint::AfterFirstCoinLogInserted && i == 0) {
             rollback();
-            mysql_pool_.Release(lease);
             if (err != nullptr) {
                 *err = "tx failpoint after first coin log inserted";
             }
@@ -146,7 +223,6 @@ bool StorageService::PersistSettlementTransaction(const SettlementPersistRequest
         }
     }
 
-    mysql_pool_.Release(lease);
     if (out_record_id != nullptr) {
         *out_record_id = inserted_record_id;
     }

@@ -18,6 +18,7 @@ add_library(ddz_core
     service/player/player_manager.cpp
     service/login/login_service.cpp
     service/reconnect/reconnect_service.cpp
+    service/rule/ddz_rule_engine.cpp
     service/room/room_manager.cpp
     service/match/match_manager.cpp
     service/match/match_service.cpp
@@ -121,6 +122,30 @@ add_executable(test_p4_settlement_service
 )
 target_link_libraries(test_p4_settlement_service PRIVATE ddz_core)
 add_test(NAME p4_settlement_service COMMAND test_p4_settlement_service)
+
+add_executable(test_p4_room_action_state_machine
+    tests/p4/test_room_action_state_machine.cpp
+)
+target_link_libraries(test_p4_room_action_state_machine PRIVATE ddz_core)
+add_test(NAME p4_room_action_state_machine COMMAND test_p4_room_action_state_machine)
+
+add_executable(test_p4_ddz_rule_engine
+    tests/p4/test_ddz_rule_engine.cpp
+)
+target_link_libraries(test_p4_ddz_rule_engine PRIVATE ddz_core)
+add_test(NAME p4_ddz_rule_engine COMMAND test_p4_ddz_rule_engine)
+
+add_executable(test_p4_forged_action_regression
+    tests/p4/test_forged_action_regression.cpp
+)
+target_link_libraries(test_p4_forged_action_regression PRIVATE ddz_core)
+add_test(NAME p4_forged_action_regression COMMAND test_p4_forged_action_regression)
+
+add_executable(test_p4_full_game_e2e
+    tests/p4/test_p4_full_game_e2e.cpp
+)
+target_link_libraries(test_p4_full_game_e2e PRIVATE ddz_core)
+add_test(NAME p4_full_game_e2e COMMAND test_p4_full_game_e2e)
 
 add_executable(test_p5_full_flow_integration
     tests/p5/test_full_flow_integration.cpp

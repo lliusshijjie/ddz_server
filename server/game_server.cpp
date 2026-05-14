@@ -1,6 +1,7 @@
 #include "server/game_server.h"
 
 #include <chrono>
+#include <sstream>
 
 #include "common/util/kv_codec.h"
 #include "common/util/time_util.h"
@@ -8,6 +9,38 @@
 #include "network/packet_codec.h"
 
 namespace ddz {
+namespace {
+
+std::vector<int32_t> ParseCardList(const std::string& text, bool* ok) {
+    std::vector<int32_t> out;
+    *ok = true;
+    if (text.empty()) {
+        return out;
+    }
+    std::stringstream ss(text);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        if (item.empty()) {
+            *ok = false;
+            return {};
+        }
+        try {
+            size_t idx = 0;
+            const int32_t v = static_cast<int32_t>(std::stoll(item, &idx));
+            if (idx != item.size()) {
+                *ok = false;
+                return {};
+            }
+            out.push_back(v);
+        } catch (...) {
+            *ok = false;
+            return {};
+        }
+    }
+    return out;
+}
+
+}  // namespace
 
 GameServer::~GameServer() {
     Stop();
@@ -63,6 +96,14 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
     std::string storage_err;
     if (!storage_service_.Init(config_, &storage_err)) {
         if (err != nullptr) *err = storage_err;
+        running_.store(false);
+        Logger::Instance().Shutdown();
+        return false;
+    }
+
+    std::string redis_err;
+    if (!redis_store_.Init(config_.redis, &redis_err)) {
+        if (err != nullptr) *err = redis_err;
         running_.store(false);
         Logger::Instance().Shutdown();
         return false;
@@ -138,6 +179,18 @@ void GameServer::RegisterHandlers() {
             response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::NOT_LOGIN))}});
             return true;
         }
+        if (redis_store_.enabled()) {
+            const auto player_id = session_manager_.GetPlayerIdByConnection(connection_id);
+            if (player_id.has_value()) {
+                const auto session = session_manager_.GetSessionByPlayer(player_id.value());
+                std::string redis_err;
+                const int64_t ttl_ms = config_.auth.token_ttl_seconds * 1000;
+                if (session.has_value()) {
+                    redis_store_.SetOnline(player_id.value(), true, ttl_ms, &redis_err);
+                    redis_store_.UpsertSession(player_id.value(), session->room_id, ttl_ms, &redis_err);
+                }
+            }
+        }
         response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::OK))}});
         return true;
     });
@@ -186,8 +239,8 @@ void GameServer::RegisterHandlers() {
         return true;
     });
 
-    dispatcher_.Register(MSG_SETTLEMENT_REQ, [this](const Packet& request, Packet& response, int64_t connection_id) {
-        response.msg_id = MSG_SETTLEMENT_RESP;
+    dispatcher_.Register(MSG_PLAYER_ACTION_REQ, [this](const Packet& request, Packet& response, int64_t connection_id) {
+        response.msg_id = MSG_PLAYER_ACTION_RESP;
         response.seq_id = request.seq_id;
         response.player_id = 0;
 
@@ -199,36 +252,116 @@ void GameServer::RegisterHandlers() {
         response.player_id = sender_player_id.value();
 
         const auto kv = ParseKvBody(request.body);
-        if (kv.find("room_id") == kv.end() || kv.find("winner_player_id") == kv.end() || kv.find("base_coin") == kv.end()) {
+        if (kv.find("room_id") == kv.end() || kv.find("action_type") == kv.end()) {
             response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
             return true;
         }
 
-        SettlementRequest settle_req;
+        int64_t room_id = 0;
+        int32_t action_type = 0;
         try {
-            settle_req.room_id = std::stoll(kv.at("room_id"));
-            settle_req.winner_player_id = std::stoll(kv.at("winner_player_id"));
-            settle_req.base_coin = std::stoll(kv.at("base_coin"));
+            room_id = std::stoll(kv.at("room_id"));
+            action_type = static_cast<int32_t>(std::stoll(kv.at("action_type")));
         } catch (...) {
             response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
             return true;
         }
+        if (room_id <= 0 || action_type <= 0) {
+            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+            return true;
+        }
 
-        const auto sender_room_id = room_manager_.GetRoomIdByPlayer(sender_player_id.value());
-        if (!sender_room_id.has_value() || sender_room_id.value() != settle_req.room_id) {
+        PlayerActionRequest action_req;
+        action_req.action_type = static_cast<PlayerActionType>(action_type);
+        if (action_req.action_type == PlayerActionType::CallScore) {
+            auto it = kv.find("score");
+            if (it == kv.end()) {
+                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                return true;
+            }
+            try {
+                action_req.call_score = static_cast<int32_t>(std::stoll(it->second));
+            } catch (...) {
+                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                return true;
+            }
+        } else if (action_req.action_type == PlayerActionType::RobLandlord) {
+            auto it = kv.find("rob");
+            if (it == kv.end()) {
+                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                return true;
+            }
+            try {
+                action_req.rob = static_cast<int32_t>(std::stoll(it->second));
+            } catch (...) {
+                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                return true;
+            }
+        } else if (action_req.action_type == PlayerActionType::PlayCards) {
+            auto it = kv.find("cards");
+            if (it == kv.end()) {
+                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                return true;
+            }
+            bool parse_ok = false;
+            action_req.cards = ParseCardList(it->second, &parse_ok);
+            if (!parse_ok) {
+                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                return true;
+            }
+        } else if (action_req.action_type != PlayerActionType::Pass) {
+            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+            return true;
+        }
+
+        std::string action_err;
+        const auto action_result = room_manager_.ApplyPlayerAction(
+            room_id, sender_player_id.value(), action_req, &action_err);
+        if (!action_result.has_value()) {
             response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PLAYER_STATE))}});
             return true;
         }
 
-        const SettlementResult settle_result = settlement_service_.Settle(settle_req, NowMs());
-        response.body = BuildKvBody({
-            {"code", std::to_string(static_cast<int32_t>(settle_result.code))},
-            {"room_id", std::to_string(settle_result.room_id)},
-            {"record_id", std::to_string(settle_result.record_id)}
-        });
-        if (settle_result.code == ErrorCode::OK) {
-            NotifyGameOver(settle_result);
+        const auto& snapshot = action_result->snapshot;
+        ErrorCode action_code = ErrorCode::OK;
+        int64_t settlement_record_id = 0;
+        NotifyRoomStatePush(room_id, snapshot);
+
+        if (action_result->game_over) {
+            const SettlementResult settle_result = settlement_service_.SettleByServerResult(
+                ServerSettlementDecision{room_id, action_result->winner_player_id, action_result->base_coin},
+                NowMs());
+            if (settle_result.code == ErrorCode::OK) {
+                settlement_record_id = settle_result.record_id;
+                NotifyGameOver(settle_result);
+            } else {
+                action_code = settle_result.code;
+                Logger::Instance().Error(
+                    "auto settlement failed room_id=" + std::to_string(room_id) +
+                    " winner=" + std::to_string(action_result->winner_player_id));
+            }
         }
+
+        response.body = BuildKvBody({
+            {"code", std::to_string(static_cast<int32_t>(action_code))},
+            {"room_id", std::to_string(snapshot.room_id)},
+            {"room_state", std::to_string(snapshot.room_state)},
+            {"current_operator_player_id", std::to_string(snapshot.current_operator_player_id)},
+            {"landlord_player_id", std::to_string(snapshot.landlord_player_id)},
+            {"base_coin", std::to_string(snapshot.base_coin)},
+            {"game_over", action_result->game_over ? "1" : "0"},
+            {"winner_player_id", std::to_string(action_result->winner_player_id)},
+            {"record_id", std::to_string(settlement_record_id)}
+        });
+        return true;
+    });
+
+    dispatcher_.Register(MSG_SETTLEMENT_REQ, [this](const Packet& request, Packet& response, int64_t connection_id) {
+        response.msg_id = MSG_SETTLEMENT_RESP;
+        response.seq_id = request.seq_id;
+        response.player_id = request.player_id;
+        response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+        Logger::Instance().Warn("client settlement request rejected; settlement must be server authoritative");
         return true;
     });
 }
@@ -275,11 +408,18 @@ void GameServer::OnConnectionClosed(int64_t connection_id) {
     if (!player_id.has_value()) {
         return;
     }
+    const auto session = session_manager_.GetSessionByPlayer(player_id.value());
     if (player_manager_.GetState(player_id.value()) == PlayerState::Matching) {
         match_manager_.Cancel(player_id.value());
     }
     session_manager_.MarkOfflineByConnection(connection_id, NowMs());
     player_manager_.ForceState(player_id.value(), PlayerState::Offline);
+    if (redis_store_.enabled()) {
+        std::string redis_err;
+        const int64_t ttl_ms = config_.auth.token_ttl_seconds * 1000;
+        redis_store_.SetOnline(player_id.value(), false, ttl_ms, &redis_err);
+        redis_store_.UpsertSession(player_id.value(), session.has_value() ? session->room_id : 0, ttl_ms, &redis_err);
+    }
 }
 
 void GameServer::NotifyMatchSuccess(int64_t room_id, int32_t mode, const std::vector<int64_t>& players) {
@@ -309,6 +449,10 @@ void GameServer::NotifyMatchSuccess(int64_t room_id, int32_t mode, const std::ve
             {"players", players_joined}
         });
         tcp_server_->SendPacket(conn_id.value(), notify);
+        if (redis_store_.enabled()) {
+            std::string redis_err;
+            redis_store_.UpsertSession(player_id, room_id, config_.auth.token_ttl_seconds * 1000, &redis_err);
+        }
     }
 }
 
@@ -355,7 +499,9 @@ void GameServer::NotifyRoomSnapshot(int64_t player_id, int64_t connection_id, co
         {"room_state", std::to_string(snapshot.room_state)},
         {"players", players_joined},
         {"current_operator_player_id", std::to_string(snapshot.current_operator_player_id)},
-        {"remain_seconds", std::to_string(snapshot.remain_seconds)}
+        {"remain_seconds", std::to_string(snapshot.remain_seconds)},
+        {"landlord_player_id", std::to_string(snapshot.landlord_player_id)},
+        {"base_coin", std::to_string(snapshot.base_coin)}
     });
     tcp_server_->SendPacket(connection_id, notify);
 }
@@ -388,6 +534,42 @@ void GameServer::NotifyPlayerReconnectInRoom(int64_t room_id, int64_t reconnect_
     }
 }
 
+void GameServer::NotifyRoomStatePush(int64_t room_id, const RoomSnapshot& snapshot) {
+    if (tcp_server_ == nullptr) {
+        return;
+    }
+    const auto room = room_manager_.GetRoomById(room_id);
+    if (!room.has_value()) {
+        return;
+    }
+    std::string players_joined;
+    for (size_t i = 0; i < snapshot.players.size(); ++i) {
+        if (i > 0) {
+            players_joined.push_back(',');
+        }
+        players_joined += std::to_string(snapshot.players[i]);
+    }
+    for (const auto player_id : room->players) {
+        const auto conn_id = session_manager_.GetConnectionIdByPlayer(player_id);
+        if (!conn_id.has_value()) {
+            continue;
+        }
+        Packet notify;
+        notify.msg_id = MSG_ROOM_STATE_PUSH;
+        notify.seq_id = 0;
+        notify.player_id = player_id;
+        notify.body = BuildKvBody({
+            {"room_id", std::to_string(snapshot.room_id)},
+            {"room_state", std::to_string(snapshot.room_state)},
+            {"players", players_joined},
+            {"current_operator_player_id", std::to_string(snapshot.current_operator_player_id)},
+            {"landlord_player_id", std::to_string(snapshot.landlord_player_id)},
+            {"base_coin", std::to_string(snapshot.base_coin)}
+        });
+        tcp_server_->SendPacket(conn_id.value(), notify);
+    }
+}
+
 void GameServer::NotifyGameOver(const SettlementResult& result) {
     if (tcp_server_ == nullptr) {
         return;
@@ -408,6 +590,13 @@ void GameServer::NotifyGameOver(const SettlementResult& result) {
             {"after_coin", std::to_string(p.after_coin)}
         });
         tcp_server_->SendPacket(conn_id.value(), notify);
+        Packet notify_v2 = notify;
+        notify_v2.msg_id = MSG_GAME_RESULT_PUSH;
+        tcp_server_->SendPacket(conn_id.value(), notify_v2);
+        if (redis_store_.enabled()) {
+            std::string redis_err;
+            redis_store_.UpsertSession(p.player_id, 0, config_.auth.token_ttl_seconds * 1000, &redis_err);
+        }
     }
 }
 

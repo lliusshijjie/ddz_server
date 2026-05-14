@@ -23,6 +23,11 @@ ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const s
     }
 
     const int64_t player_id = verify.player_id;
+    if (redis_store_ != nullptr && redis_store_->enabled() && !redis_store_->ValidateToken(player_id, token.value())) {
+        result.code = ErrorCode::INVALID_TOKEN;
+        return result;
+    }
+
     const auto session = session_manager_.GetSessionByPlayer(player_id);
     if (!session.has_value()) {
         result.code = ErrorCode::NOT_LOGIN;
@@ -40,6 +45,16 @@ ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const s
     } else {
         player_manager_.ForceState(player_id, PlayerState::Lobby);
     }
+
+    if (redis_store_ != nullptr && redis_store_->enabled()) {
+        const int64_t ttl_ms = auth_token_service_.ttl_seconds() * 1000;
+        std::string redis_err;
+        if (!redis_store_->SetOnline(player_id, true, ttl_ms, &redis_err) ||
+            !redis_store_->UpsertSession(player_id, result.room_id, ttl_ms, &redis_err)) {
+            result.code = ErrorCode::UNKNOWN_ERROR;
+        }
+    }
+
     return result;
 }
 

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -20,6 +21,17 @@ public:
     std::optional<int64_t> GetRoomIdByPlayer(int64_t player_id) const;
     std::optional<RoomSnapshot> BuildSnapshotByRoomId(int64_t room_id) const;
     std::optional<RoomSnapshot> BuildSnapshotByPlayerId(int64_t player_id) const;
+    std::optional<RoomSnapshot> ApplyPlayerAction(int64_t room_id,
+                                                  int64_t player_id,
+                                                  PlayerActionType action_type,
+                                                  std::string* err);
+    std::optional<PlayerActionResult> ApplyPlayerAction(int64_t room_id,
+                                                        int64_t player_id,
+                                                        const PlayerActionRequest& request,
+                                                        std::string* err);
+    std::optional<std::vector<int32_t>> GetPlayerHand(int64_t room_id, int64_t player_id) const;
+    bool MarkSettling(int64_t room_id);
+    bool MarkFinished(int64_t room_id);
 
 private:
     mutable std::mutex mu_;

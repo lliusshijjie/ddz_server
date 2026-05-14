@@ -6,39 +6,44 @@
 namespace ddz {
 
 SettlementResult SettlementService::Settle(const SettlementRequest& req, int64_t now_ms) {
-    SettlementResult result;
-    result.room_id = req.room_id;
-    result.winner_player_id = req.winner_player_id;
+    return SettleByServerResult(ServerSettlementDecision{req.room_id, req.winner_player_id, req.base_coin}, now_ms);
+}
 
-    if (req.room_id <= 0 || req.winner_player_id <= 0 || req.base_coin <= 0) {
+SettlementResult SettlementService::SettleByServerResult(const ServerSettlementDecision& decision, int64_t now_ms) {
+    SettlementResult result;
+    result.room_id = decision.room_id;
+    result.winner_player_id = decision.winner_player_id;
+
+    if (decision.room_id <= 0 || decision.winner_player_id <= 0 || decision.base_coin <= 0) {
         result.code = ErrorCode::INVALID_PACKET;
         return result;
     }
 
-    if (!TryBeginSettlement(req.room_id)) {
+    if (!TryBeginSettlement(decision.room_id)) {
         result.code = ErrorCode::SETTLEMENT_FAILED;
         return result;
     }
 
     do {
-        const auto room_opt = room_manager_.GetRoomById(req.room_id);
+        const auto room_opt = room_manager_.GetRoomById(decision.room_id);
         if (!room_opt.has_value()) {
             result.code = ErrorCode::ROOM_NOT_FOUND;
             break;
         }
+        room_manager_.MarkSettling(decision.room_id);
         const auto& room = room_opt.value();
         const bool winner_in_room =
-            std::find(room.players.begin(), room.players.end(), req.winner_player_id) != room.players.end();
+            std::find(room.players.begin(), room.players.end(), decision.winner_player_id) != room.players.end();
         if (!winner_in_room) {
             result.code = ErrorCode::SETTLEMENT_FAILED;
             break;
         }
 
-        const int64_t winner_gain = req.base_coin * static_cast<int64_t>(room.players.size() - 1);
+        const int64_t winner_gain = decision.base_coin * static_cast<int64_t>(room.players.size() - 1);
         SettlementPersistRequest persist_req;
         persist_req.room_id = room.room_id;
         persist_req.game_mode = room.mode;
-        persist_req.winner_player_id = req.winner_player_id;
+        persist_req.winner_player_id = decision.winner_player_id;
         persist_req.started_at_ms = now_ms;
         persist_req.ended_at_ms = now_ms;
         persist_req.players = room.players;
@@ -53,7 +58,7 @@ SettlementResult SettlementService::Settle(const SettlementRequest& req, int64_t
                 break;
             }
 
-            const int64_t delta = (player_id == req.winner_player_id) ? winner_gain : -req.base_coin;
+            const int64_t delta = (player_id == decision.winner_player_id) ? winner_gain : -decision.base_coin;
             const int64_t before = player->coin;
             const int64_t after = before + delta;
 
@@ -98,11 +103,12 @@ SettlementResult SettlementService::Settle(const SettlementRequest& req, int64_t
             player_manager_.ForceState(player_id, PlayerState::Lobby);
         }
 
+        room_manager_.MarkFinished(room.room_id);
         room_manager_.DestroyRoom(room.room_id);
         result.code = ErrorCode::OK;
     } while (false);
 
-    EndSettlement(req.room_id);
+    EndSettlement(decision.room_id);
     return result;
 }
 

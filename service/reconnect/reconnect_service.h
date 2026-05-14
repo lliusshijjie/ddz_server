@@ -7,6 +7,7 @@
 #include "service/login/auth_token_service.h"
 #include "service/login/login_service.h"
 #include "service/player/player_manager.h"
+#include "service/redis/redis_optional_store.h"
 #include "service/room/room_manager.h"
 #include "service/session/session_manager.h"
 
@@ -25,11 +26,13 @@ public:
     ReconnectService(SessionManager& session_manager,
                      AuthTokenService& auth_token_service,
                      PlayerManager& player_manager,
-                     RoomManager& room_manager)
+                     RoomManager& room_manager,
+                     RedisOptionalStore* redis_store = nullptr)
         : session_manager_(session_manager),
           auth_token_service_(auth_token_service),
           player_manager_(player_manager),
-          room_manager_(room_manager) {}
+          room_manager_(room_manager),
+          redis_store_(redis_store) {}
 
     ReconnectResult HandleReconnect(int64_t connection_id, const std::string& request_body, int64_t now_ms);
 
@@ -41,6 +44,7 @@ private:
     AuthTokenService& auth_token_service_;
     PlayerManager& player_manager_;
     RoomManager& room_manager_;
+    RedisOptionalStore* redis_store_ = nullptr;
 };
 
 }  // namespace ddz

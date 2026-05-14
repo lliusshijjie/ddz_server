@@ -25,6 +25,7 @@ public:
     void Configure(std::string secret, int64_t ttl_seconds);
     TokenIssueResult Issue(int64_t player_id, int64_t now_ms) const;
     TokenVerifyResult Verify(const std::string& token, int64_t now_ms) const;
+    int64_t ttl_seconds() const;
 
 private:
     static std::string GenerateNonce(int64_t player_id, int64_t now_ms);
@@ -36,4 +37,3 @@ private:
 };
 
 }  // namespace ddz
-

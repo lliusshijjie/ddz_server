@@ -38,6 +38,20 @@ LoginResult LoginService::HandleLogin(int64_t connection_id, const std::string& 
     result.token = token_result.token;
     result.expire_at_ms = token_result.expire_at_ms;
     result.old_connection_to_kick = old_conn;
+
+    if (redis_store_ != nullptr && redis_store_->enabled()) {
+        std::string redis_err;
+        const int64_t ttl_ms = auth_token_service_.ttl_seconds() * 1000;
+        if (!redis_store_->StoreToken(player_id, result.token, ttl_ms, &redis_err) ||
+            !redis_store_->SetOnline(player_id, true, ttl_ms, &redis_err) ||
+            !redis_store_->UpsertSession(player_id, 0, ttl_ms, &redis_err)) {
+            result.code = ErrorCode::UNKNOWN_ERROR;
+            result.token.clear();
+            result.expire_at_ms = 0;
+            return result;
+        }
+    }
+
     return result;
 }
 

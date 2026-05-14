@@ -34,6 +34,12 @@ struct SettlementResult {
     std::vector<SettlementPlayerResult> players;
 };
 
+struct ServerSettlementDecision {
+    int64_t room_id = 0;
+    int64_t winner_player_id = 0;
+    int64_t base_coin = 0;
+};
+
 class SettlementService {
 public:
     SettlementService(SessionManager& session_manager,
@@ -46,6 +52,7 @@ public:
           storage_service_(storage_service) {}
 
     SettlementResult Settle(const SettlementRequest& req, int64_t now_ms);
+    SettlementResult SettleByServerResult(const ServerSettlementDecision& decision, int64_t now_ms);
 
 private:
     bool TryBeginSettlement(int64_t room_id);

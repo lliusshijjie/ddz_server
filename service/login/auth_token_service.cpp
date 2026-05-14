@@ -93,6 +93,10 @@ TokenVerifyResult AuthTokenService::Verify(const std::string& token, int64_t now
     return result;
 }
 
+int64_t AuthTokenService::ttl_seconds() const {
+    return ttl_seconds_;
+}
+
 std::string AuthTokenService::GenerateNonce(int64_t player_id, int64_t now_ms) {
     static std::atomic<uint64_t> seq{1};
     const uint64_t s = seq.fetch_add(1);

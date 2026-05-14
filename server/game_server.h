@@ -13,6 +13,7 @@
 #include "service/match/match_service.h"
 #include "service/match/match_manager.h"
 #include "service/player/player_manager.h"
+#include "service/redis/redis_optional_store.h"
 #include "service/reconnect/reconnect_service.h"
 #include "service/room/room_manager.h"
 #include "service/settlement/settlement_service.h"
@@ -35,6 +36,10 @@ public:
     static constexpr uint32_t MSG_MATCH_TIMEOUT_NOTIFY = 2006;
     static constexpr uint32_t MSG_ROOM_SNAPSHOT_NOTIFY = 3001;
     static constexpr uint32_t MSG_PLAYER_RECONNECT_NOTIFY = 3003;
+    static constexpr uint32_t MSG_PLAYER_ACTION_REQ = 4001;
+    static constexpr uint32_t MSG_PLAYER_ACTION_RESP = 4002;
+    static constexpr uint32_t MSG_ROOM_STATE_PUSH = 4003;
+    static constexpr uint32_t MSG_GAME_RESULT_PUSH = 4004;
     static constexpr uint32_t MSG_GAME_OVER_NOTIFY = 5001;
     static constexpr uint32_t MSG_SETTLEMENT_REQ = 5002;
     static constexpr uint32_t MSG_SETTLEMENT_RESP = 5003;
@@ -56,6 +61,7 @@ private:
     void NotifyMatchTimeout(const std::vector<MatchTimeoutEvent>& timeout_players);
     void NotifyRoomSnapshot(int64_t player_id, int64_t connection_id, const RoomSnapshot& snapshot);
     void NotifyPlayerReconnectInRoom(int64_t room_id, int64_t reconnect_player_id);
+    void NotifyRoomStatePush(int64_t room_id, const RoomSnapshot& snapshot);
     void NotifyGameOver(const SettlementResult& result);
 
 private:
@@ -67,10 +73,11 @@ private:
     MatchManager match_manager_;
     RoomManager room_manager_;
     StorageService storage_service_;
+    RedisOptionalStore redis_store_;
     AuthTokenService auth_token_service_;
-    LoginService login_service_{session_manager_, player_manager_, auth_token_service_};
+    LoginService login_service_{session_manager_, player_manager_, auth_token_service_, &redis_store_};
     MatchService match_service_{session_manager_, player_manager_, match_manager_, room_manager_};
-    ReconnectService reconnect_service_{session_manager_, auth_token_service_, player_manager_, room_manager_};
+    ReconnectService reconnect_service_{session_manager_, auth_token_service_, player_manager_, room_manager_, &redis_store_};
     SettlementService settlement_service_{session_manager_, player_manager_, room_manager_, storage_service_};
     std::atomic<bool> running_{false};
     std::thread timer_thread_;
