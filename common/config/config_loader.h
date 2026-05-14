@@ -42,12 +42,23 @@ struct AuthConfig {
     int64_t token_ttl_seconds = 604800;
 };
 
+struct ObservabilityConfig {
+    bool enable_structured_log = true;
+    int64_t metrics_report_interval_ms = 30000;
+};
+
+struct PerfConfig {
+    bool soft_threshold_enabled = true;
+};
+
 struct AppConfig {
     ServerConfig server;
     LogConfig log;
     MysqlConfig mysql;
     RedisConfig redis;
     AuthConfig auth;
+    ObservabilityConfig observability;
+    PerfConfig perf;
 };
 
 class ConfigLoader {

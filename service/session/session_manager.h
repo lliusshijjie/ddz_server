@@ -4,6 +4,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace ddz {
 
@@ -14,6 +15,7 @@ struct Session {
     bool online = false;
     int64_t login_time_ms = 0;
     int64_t last_heartbeat_ms = 0;
+    int64_t offline_at_ms = 0;
 };
 
 class SessionManager {
@@ -28,6 +30,7 @@ public:
     std::optional<int64_t> GetPlayerIdByConnection(int64_t connection_id) const;
     std::optional<int64_t> GetConnectionIdByPlayer(int64_t player_id) const;
     std::optional<Session> GetSessionByPlayer(int64_t player_id) const;
+    std::vector<Session> GetAllSessions() const;
 
     bool UpdateHeartbeatByConnection(int64_t connection_id, int64_t now_ms);
     bool MarkOfflineByConnection(int64_t connection_id, int64_t now_ms);

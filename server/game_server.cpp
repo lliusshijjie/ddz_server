@@ -1,5 +1,6 @@
 #include "server/game_server.h"
 
+#include <atomic>
 #include <chrono>
 #include <sstream>
 
@@ -10,6 +11,8 @@
 
 namespace ddz {
 namespace {
+
+std::atomic<uint64_t> g_trace_seq{1};
 
 std::vector<int32_t> ParseCardList(const std::string& text, bool* ok) {
     std::vector<int32_t> out;
@@ -38,6 +41,39 @@ std::vector<int32_t> ParseCardList(const std::string& text, bool* ok) {
         }
     }
     return out;
+}
+
+std::string GenerateTraceId(int64_t connection_id, uint32_t seq_id) {
+    return std::to_string(NowMs()) + "-" +
+           std::to_string(connection_id) + "-" +
+           std::to_string(seq_id) + "-" +
+           std::to_string(g_trace_seq.fetch_add(1));
+}
+
+std::string EventNameByMsgId(uint32_t msg_id) {
+    switch (msg_id) {
+    case GameServer::MSG_LOGIN_REQ: return "login";
+    case GameServer::MSG_HEARTBEAT_REQ: return "heartbeat";
+    case GameServer::MSG_MATCH_REQ: return "match";
+    case GameServer::MSG_CANCEL_MATCH_REQ: return "cancel_match";
+    case GameServer::MSG_RECONNECT_REQ: return "reconnect";
+    case GameServer::MSG_PLAYER_ACTION_REQ: return "player_action";
+    case GameServer::MSG_SETTLEMENT_REQ: return "settlement_request";
+    default: return "unknown";
+    }
+}
+
+ErrorCode ParseCodeFromResponseBody(const std::string& body) {
+    const auto kv = ParseKvBody(body);
+    const auto it = kv.find("code");
+    if (it == kv.end()) {
+        return ErrorCode::UNKNOWN_ERROR;
+    }
+    try {
+        return static_cast<ErrorCode>(std::stoi(it->second));
+    } catch (...) {
+        return ErrorCode::UNKNOWN_ERROR;
+    }
 }
 
 }  // namespace
@@ -85,6 +121,13 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
         running_.store(false);
         return false;
     }
+    if (config_.observability.metrics_report_interval_ms <= 0) {
+        if (err != nullptr) {
+            *err = "invalid observability.metrics_report_interval_ms, must be > 0";
+        }
+        running_.store(false);
+        return false;
+    }
 
     std::string log_err;
     if (!Logger::Instance().Init(config_.log.level, config_.log.dir, &log_err)) {
@@ -110,6 +153,7 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
     }
 
     auth_token_service_.Configure(config_.auth.token_secret, config_.auth.token_ttl_seconds);
+    observability_.Configure(config_.observability.enable_structured_log, config_.observability.metrics_report_interval_ms);
     RegisterHandlers();
     tcp_server_ = std::make_unique<TcpServer>(config_.server.host, config_.server.port, config_.server.max_packet_size);
     tcp_server_->SetMessageCallback([this](int64_t connection_id, const Packet& packet) { OnMessage(connection_id, packet); });
@@ -224,7 +268,8 @@ void GameServer::RegisterHandlers() {
         response.body = BuildKvBody({
             {"code", std::to_string(static_cast<int32_t>(r.code))},
             {"player_id", std::to_string(r.player_id)},
-            {"room_id", std::to_string(r.room_id)}
+            {"room_id", std::to_string(r.room_id)},
+            {"snapshot_version", std::to_string(r.snapshot.has_value() ? r.snapshot->snapshot_version : 0)}
         });
 
         if (r.old_connection_to_kick.has_value() &&
@@ -232,7 +277,8 @@ void GameServer::RegisterHandlers() {
             tcp_server_ != nullptr) {
             tcp_server_->CloseConnection(r.old_connection_to_kick.value());
         }
-        if (r.code == ErrorCode::OK && r.snapshot.has_value()) {
+        if ((r.code == ErrorCode::OK || r.code == ErrorCode::SNAPSHOT_VERSION_CONFLICT) && r.snapshot.has_value()) {
+            room_manager_.MarkPlayerOnline(r.player_id);
             NotifyRoomSnapshot(r.player_id, connection_id, r.snapshot.value());
             NotifyPlayerReconnectInRoom(r.snapshot->room_id, r.player_id);
         }
@@ -328,9 +374,11 @@ void GameServer::RegisterHandlers() {
         NotifyRoomStatePush(room_id, snapshot);
 
         if (action_result->game_over) {
+            const int64_t settle_begin = NowMs();
             const SettlementResult settle_result = settlement_service_.SettleByServerResult(
                 ServerSettlementDecision{room_id, action_result->winner_player_id, action_result->base_coin},
                 NowMs());
+            observability_.Record("auto_settlement", settle_result.code, NowMs() - settle_begin);
             if (settle_result.code == ErrorCode::OK) {
                 settlement_record_id = settle_result.record_id;
                 NotifyGameOver(settle_result);
@@ -349,6 +397,8 @@ void GameServer::RegisterHandlers() {
             {"current_operator_player_id", std::to_string(snapshot.current_operator_player_id)},
             {"landlord_player_id", std::to_string(snapshot.landlord_player_id)},
             {"base_coin", std::to_string(snapshot.base_coin)},
+            {"snapshot_version", std::to_string(snapshot.snapshot_version)},
+            {"last_action_seq", std::to_string(snapshot.last_action_seq)},
             {"game_over", action_result->game_over ? "1" : "0"},
             {"winner_player_id", std::to_string(action_result->winner_player_id)},
             {"record_id", std::to_string(settlement_record_id)}
@@ -367,39 +417,132 @@ void GameServer::RegisterHandlers() {
 }
 
 void GameServer::TimerLoop() {
+    static constexpr int64_t kTrusteeEnterMs = 30000;
+    static constexpr int64_t kOfflineLoseMs = 120000;
     while (running_.load()) {
+        const int64_t now_ms = NowMs();
         if (tcp_server_ != nullptr) {
             tcp_server_->CloseIdleConnections(config_.server.heartbeat_timeout_ms);
         }
-        const auto timeout_events = match_service_.HandleMatchTimeout(NowMs(), config_.server.match_timeout_ms);
+        const auto timeout_events = match_service_.HandleMatchTimeout(now_ms, config_.server.match_timeout_ms);
         if (!timeout_events.empty()) {
             NotifyMatchTimeout(timeout_events);
+        }
+
+        for (const auto& session : session_manager_.GetAllSessions()) {
+            if (session.room_id <= 0) {
+                continue;
+            }
+            if (session.online) {
+                room_manager_.MarkPlayerOnline(session.player_id);
+                continue;
+            }
+            if (session.offline_at_ms <= 0) {
+                continue;
+            }
+            room_manager_.MarkPlayerOffline(session.player_id, session.offline_at_ms);
+            const int64_t offline_dur_ms = now_ms - session.offline_at_ms;
+            if (offline_dur_ms >= kTrusteeEnterMs) {
+                room_manager_.MarkPlayerTrustee(session.player_id, true);
+                const auto room = room_manager_.GetRoomById(session.room_id);
+                if (room.has_value() && room->current_operator_player_id == session.player_id) {
+                    std::string trustee_err;
+                    const auto auto_action = room_manager_.ApplyTrusteeAction(session.room_id, session.player_id, &trustee_err);
+                    if (auto_action.has_value()) {
+                        NotifyRoomStatePush(session.room_id, auto_action->snapshot);
+                        if (auto_action->game_over) {
+                            const int64_t settle_begin = NowMs();
+                            const SettlementResult settle_result = settlement_service_.SettleByServerResult(
+                                ServerSettlementDecision{
+                                    session.room_id,
+                                    auto_action->winner_player_id,
+                                    auto_action->base_coin
+                                },
+                                NowMs());
+                            observability_.Record("trustee_auto_settlement", settle_result.code, NowMs() - settle_begin);
+                            if (settle_result.code == ErrorCode::OK) {
+                                NotifyGameOver(settle_result);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (offline_dur_ms >= kOfflineLoseMs) {
+                const auto winner = room_manager_.PickWinnerForOfflineLose(session.room_id, session.player_id);
+                if (winner.has_value()) {
+                    const int64_t settle_begin = NowMs();
+                    const SettlementResult settle_result = settlement_service_.SettleByServerResult(
+                        ServerSettlementDecision{
+                            session.room_id,
+                            winner.value(),
+                            1
+                        },
+                        NowMs());
+                    observability_.Record("offline_timeout_settlement", settle_result.code, NowMs() - settle_begin);
+                    if (settle_result.code == ErrorCode::OK) {
+                        NotifyGameOver(settle_result);
+                    }
+                }
+            }
+        }
+
+        if (const auto snapshot = observability_.TryBuildMetricsSnapshot(now_ms); snapshot.has_value()) {
+            Logger::Instance().Info(snapshot.value());
         }
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 
 void GameServer::OnMessage(int64_t connection_id, const Packet& packet) {
-    Logger::Instance().Info(
-        "recv conn_id=" + std::to_string(connection_id) +
-        " msg_id=" + std::to_string(packet.msg_id) +
-        " seq_id=" + std::to_string(packet.seq_id) +
-        " player_id=" + std::to_string(packet.player_id) +
-        " body_len=" + std::to_string(packet.body.size()));
+    const int64_t begin_ms = NowMs();
+    const std::string trace_id = GenerateTraceId(connection_id, packet.seq_id);
+    ObservabilityService::SetCurrentTraceId(trace_id);
+    if (observability_.structured_log_enabled()) {
+        Logger::Instance().Info(
+            "event=request trace_id=" + trace_id +
+            " conn_id=" + std::to_string(connection_id) +
+            " msg_id=" + std::to_string(packet.msg_id) +
+            " seq_id=" + std::to_string(packet.seq_id) +
+            " player_id=" + std::to_string(packet.player_id) +
+            " body_len=" + std::to_string(packet.body.size()));
+    } else {
+        Logger::Instance().Info(
+            "recv conn_id=" + std::to_string(connection_id) +
+            " msg_id=" + std::to_string(packet.msg_id) +
+            " seq_id=" + std::to_string(packet.seq_id) +
+            " player_id=" + std::to_string(packet.player_id) +
+            " body_len=" + std::to_string(packet.body.size()));
+    }
 
     Packet response;
     const bool need_reply = dispatcher_.Dispatch(packet, response, connection_id);
     if (need_reply && tcp_server_ != nullptr) {
-        Logger::Instance().Info(
-            "send conn_id=" + std::to_string(connection_id) +
-            " msg_id=" + std::to_string(response.msg_id) +
-            " seq_id=" + std::to_string(response.seq_id) +
-            " player_id=" + std::to_string(response.player_id) +
-            " body_len=" + std::to_string(response.body.size()));
+        if (observability_.structured_log_enabled()) {
+            Logger::Instance().Info(
+                "event=response trace_id=" + trace_id +
+                " conn_id=" + std::to_string(connection_id) +
+                " msg_id=" + std::to_string(response.msg_id) +
+                " seq_id=" + std::to_string(response.seq_id) +
+                " player_id=" + std::to_string(response.player_id) +
+                " body_len=" + std::to_string(response.body.size()));
+        } else {
+            Logger::Instance().Info(
+                "send conn_id=" + std::to_string(connection_id) +
+                " msg_id=" + std::to_string(response.msg_id) +
+                " seq_id=" + std::to_string(response.seq_id) +
+                " player_id=" + std::to_string(response.player_id) +
+                " body_len=" + std::to_string(response.body.size()));
+        }
         if (!tcp_server_->SendPacket(connection_id, response)) {
             Logger::Instance().Warn("send response failed conn_id=" + std::to_string(connection_id));
         }
+        const ErrorCode code = ParseCodeFromResponseBody(response.body);
+        observability_.Record(EventNameByMsgId(packet.msg_id), code, NowMs() - begin_ms);
+    } else {
+        observability_.Record(EventNameByMsgId(packet.msg_id), ErrorCode::UNKNOWN_ERROR, NowMs() - begin_ms);
     }
+    ObservabilityService::SetCurrentTraceId("");
 }
 
 void GameServer::OnConnectionClosed(int64_t connection_id) {
@@ -414,6 +557,8 @@ void GameServer::OnConnectionClosed(int64_t connection_id) {
     }
     session_manager_.MarkOfflineByConnection(connection_id, NowMs());
     player_manager_.ForceState(player_id.value(), PlayerState::Offline);
+    const int64_t offline_at_ms = NowMs();
+    room_manager_.MarkPlayerOffline(player_id.value(), offline_at_ms);
     if (redis_store_.enabled()) {
         std::string redis_err;
         const int64_t ttl_ms = config_.auth.token_ttl_seconds * 1000;
@@ -449,6 +594,7 @@ void GameServer::NotifyMatchSuccess(int64_t room_id, int32_t mode, const std::ve
             {"players", players_joined}
         });
         tcp_server_->SendPacket(conn_id.value(), notify);
+        room_manager_.MarkPlayerOnline(player_id);
         if (redis_store_.enabled()) {
             std::string redis_err;
             redis_store_.UpsertSession(player_id, room_id, config_.auth.token_ttl_seconds * 1000, &redis_err);
@@ -501,7 +647,12 @@ void GameServer::NotifyRoomSnapshot(int64_t player_id, int64_t connection_id, co
         {"current_operator_player_id", std::to_string(snapshot.current_operator_player_id)},
         {"remain_seconds", std::to_string(snapshot.remain_seconds)},
         {"landlord_player_id", std::to_string(snapshot.landlord_player_id)},
-        {"base_coin", std::to_string(snapshot.base_coin)}
+        {"base_coin", std::to_string(snapshot.base_coin)},
+        {"snapshot_version", std::to_string(snapshot.snapshot_version)},
+        {"last_action_seq", std::to_string(snapshot.last_action_seq)},
+        {"players_online_bitmap", snapshot.players_online_bitmap},
+        {"trustee_players", snapshot.trustee_players},
+        {"nearest_offline_deadline_ms", std::to_string(snapshot.nearest_offline_deadline_ms)}
     });
     tcp_server_->SendPacket(connection_id, notify);
 }
@@ -564,7 +715,12 @@ void GameServer::NotifyRoomStatePush(int64_t room_id, const RoomSnapshot& snapsh
             {"players", players_joined},
             {"current_operator_player_id", std::to_string(snapshot.current_operator_player_id)},
             {"landlord_player_id", std::to_string(snapshot.landlord_player_id)},
-            {"base_coin", std::to_string(snapshot.base_coin)}
+            {"base_coin", std::to_string(snapshot.base_coin)},
+            {"snapshot_version", std::to_string(snapshot.snapshot_version)},
+            {"last_action_seq", std::to_string(snapshot.last_action_seq)},
+            {"players_online_bitmap", snapshot.players_online_bitmap},
+            {"trustee_players", snapshot.trustee_players},
+            {"nearest_offline_deadline_ms", std::to_string(snapshot.nearest_offline_deadline_ms)}
         });
         tcp_server_->SendPacket(conn_id.value(), notify);
     }

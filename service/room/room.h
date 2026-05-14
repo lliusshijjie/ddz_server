@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -32,6 +33,11 @@ struct Room {
     int64_t last_play_player_id = 0;
     std::vector<int32_t> last_play_cards;
     int32_t consecutive_pass_count = 0;
+    int64_t snapshot_version = 1;
+    int64_t last_action_seq = 0;
+    std::unordered_map<int64_t, bool> online_by_player;
+    std::unordered_map<int64_t, bool> trustee_by_player;
+    std::unordered_map<int64_t, int64_t> offline_at_ms_by_player;
 };
 
 struct RoomSnapshot {
@@ -43,6 +49,11 @@ struct RoomSnapshot {
     int32_t remain_seconds = 0;
     int64_t landlord_player_id = 0;
     int32_t base_coin = 0;
+    int64_t snapshot_version = 0;
+    int64_t last_action_seq = 0;
+    std::string players_online_bitmap;
+    std::string trustee_players;
+    int64_t nearest_offline_deadline_ms = 0;
 };
 
 enum class PlayerActionType : int32_t {

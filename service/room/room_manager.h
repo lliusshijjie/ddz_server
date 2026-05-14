@@ -30,6 +30,11 @@ public:
                                                         const PlayerActionRequest& request,
                                                         std::string* err);
     std::optional<std::vector<int32_t>> GetPlayerHand(int64_t room_id, int64_t player_id) const;
+    bool MarkPlayerOffline(int64_t player_id, int64_t offline_at_ms);
+    bool MarkPlayerOnline(int64_t player_id);
+    bool MarkPlayerTrustee(int64_t player_id, bool trustee);
+    std::optional<PlayerActionResult> ApplyTrusteeAction(int64_t room_id, int64_t player_id, std::string* err);
+    std::optional<int64_t> PickWinnerForOfflineLose(int64_t room_id, int64_t loser_player_id) const;
     bool MarkSettling(int64_t room_id);
     bool MarkFinished(int64_t room_id);
 

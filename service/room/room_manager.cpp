@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <random>
+#include <sstream>
 #include <unordered_map>
 
 #include "service/rule/ddz_rule_engine.h"
@@ -70,7 +71,49 @@ RoomSnapshot MakeSnapshot(const Room& room) {
     snapshot.current_operator_player_id = room.current_operator_player_id;
     snapshot.landlord_player_id = room.landlord_player_id;
     snapshot.base_coin = room.base_coin;
+    snapshot.snapshot_version = room.snapshot_version;
+    snapshot.last_action_seq = room.last_action_seq;
+
+    std::string online_bitmap;
+    std::string trustee_list;
+    int64_t nearest_deadline = 0;
+    for (size_t i = 0; i < room.players.size(); ++i) {
+        const int64_t pid = room.players[i];
+        auto online_it = room.online_by_player.find(pid);
+        const bool online = (online_it != room.online_by_player.end()) ? online_it->second : true;
+        online_bitmap.push_back(online ? '1' : '0');
+
+        auto trustee_it = room.trustee_by_player.find(pid);
+        const bool trustee = (trustee_it != room.trustee_by_player.end()) ? trustee_it->second : false;
+        if (trustee) {
+            if (!trustee_list.empty()) {
+                trustee_list.push_back(',');
+            }
+            trustee_list += std::to_string(pid);
+        }
+
+        auto off_it = room.offline_at_ms_by_player.find(pid);
+        if (off_it != room.offline_at_ms_by_player.end() && off_it->second > 0) {
+            const int64_t deadline = off_it->second + 120000;
+            if (nearest_deadline == 0 || deadline < nearest_deadline) {
+                nearest_deadline = deadline;
+            }
+        }
+    }
+    snapshot.players_online_bitmap = online_bitmap;
+    snapshot.trustee_players = trustee_list;
+    snapshot.nearest_offline_deadline_ms = nearest_deadline;
     return snapshot;
+}
+
+void BumpSnapshotVersion(Room* room, bool count_as_action) {
+    if (room == nullptr) {
+        return;
+    }
+    room->snapshot_version += 1;
+    if (count_as_action) {
+        room->last_action_seq += 1;
+    }
 }
 
 bool RemoveCards(std::vector<int32_t>* hand, const std::vector<int32_t>& cards) {
@@ -110,6 +153,13 @@ int64_t RoomManager::CreateRoom(int32_t mode, const std::vector<int64_t>& player
     room.players = players;
     room.current_operator_player_id = players.empty() ? 0 : players.front();
     room.base_coin = 1;
+    room.snapshot_version = 1;
+    room.last_action_seq = 0;
+    for (const auto player_id : players) {
+        room.online_by_player[player_id] = true;
+        room.trustee_by_player[player_id] = false;
+        room.offline_at_ms_by_player[player_id] = 0;
+    }
     rooms_[room_id] = room;
     for (const auto player_id : players) {
         player_to_room_[player_id] = room_id;
@@ -252,6 +302,7 @@ std::optional<PlayerActionResult> RoomManager::ApplyPlayerAction(int64_t room_id
         } else {
             room.current_operator_player_id = NextOperator(room, player_id);
         }
+        BumpSnapshotVersion(&room, true);
         result.snapshot = MakeSnapshot(room);
         return result;
     }
@@ -299,6 +350,7 @@ std::optional<PlayerActionResult> RoomManager::ApplyPlayerAction(int64_t room_id
         } else {
             room.current_operator_player_id = NextOperator(room, player_id);
         }
+        BumpSnapshotVersion(&room, true);
         result.snapshot = MakeSnapshot(room);
         return result;
     }
@@ -339,6 +391,7 @@ std::optional<PlayerActionResult> RoomManager::ApplyPlayerAction(int64_t room_id
         } else {
             room.current_operator_player_id = NextOperator(room, player_id);
         }
+        BumpSnapshotVersion(&room, true);
         result.snapshot = MakeSnapshot(room);
         return result;
     }
@@ -396,6 +449,7 @@ std::optional<PlayerActionResult> RoomManager::ApplyPlayerAction(int64_t room_id
     if (hand_it->second.empty()) {
         room.state = RoomState::Settling;
         room.current_operator_player_id = player_id;
+        BumpSnapshotVersion(&room, true);
         result.snapshot = MakeSnapshot(room);
         result.game_over = true;
         result.winner_player_id = player_id;
@@ -404,6 +458,7 @@ std::optional<PlayerActionResult> RoomManager::ApplyPlayerAction(int64_t room_id
     }
 
     room.current_operator_player_id = NextOperator(room, player_id);
+    BumpSnapshotVersion(&room, true);
     result.snapshot = MakeSnapshot(room);
     return result;
 }
@@ -448,6 +503,157 @@ std::optional<std::vector<int32_t>> RoomManager::GetPlayerHand(int64_t room_id, 
     return hit->second;
 }
 
+bool RoomManager::MarkPlayerOffline(int64_t player_id, int64_t offline_at_ms) {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto pit = player_to_room_.find(player_id);
+    if (pit == player_to_room_.end()) {
+        return false;
+    }
+    auto rit = rooms_.find(pit->second);
+    if (rit == rooms_.end()) {
+        return false;
+    }
+    Room& room = rit->second;
+    auto it = room.online_by_player.find(player_id);
+    if (it == room.online_by_player.end()) {
+        return false;
+    }
+    if (!it->second && room.offline_at_ms_by_player[player_id] > 0) {
+        return true;
+    }
+    it->second = false;
+    room.offline_at_ms_by_player[player_id] = offline_at_ms;
+    BumpSnapshotVersion(&room, false);
+    return true;
+}
+
+bool RoomManager::MarkPlayerOnline(int64_t player_id) {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto pit = player_to_room_.find(player_id);
+    if (pit == player_to_room_.end()) {
+        return false;
+    }
+    auto rit = rooms_.find(pit->second);
+    if (rit == rooms_.end()) {
+        return false;
+    }
+    Room& room = rit->second;
+    auto it = room.online_by_player.find(player_id);
+    if (it == room.online_by_player.end()) {
+        return false;
+    }
+    if (it->second && !room.trustee_by_player[player_id]) {
+        room.offline_at_ms_by_player[player_id] = 0;
+        return true;
+    }
+    it->second = true;
+    room.trustee_by_player[player_id] = false;
+    room.offline_at_ms_by_player[player_id] = 0;
+    BumpSnapshotVersion(&room, false);
+    return true;
+}
+
+bool RoomManager::MarkPlayerTrustee(int64_t player_id, bool trustee) {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto pit = player_to_room_.find(player_id);
+    if (pit == player_to_room_.end()) {
+        return false;
+    }
+    auto rit = rooms_.find(pit->second);
+    if (rit == rooms_.end()) {
+        return false;
+    }
+    Room& room = rit->second;
+    auto it = room.trustee_by_player.find(player_id);
+    if (it == room.trustee_by_player.end()) {
+        return false;
+    }
+    if (it->second == trustee) {
+        return true;
+    }
+    it->second = trustee;
+    BumpSnapshotVersion(&room, false);
+    return true;
+}
+
+std::optional<PlayerActionResult> RoomManager::ApplyTrusteeAction(int64_t room_id, int64_t player_id, std::string* err) {
+    PlayerActionRequest req;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        auto rit = rooms_.find(room_id);
+        if (rit == rooms_.end()) {
+            if (err != nullptr) {
+                *err = "room not found";
+            }
+            return std::nullopt;
+        }
+        const Room& room = rit->second;
+        if (room.current_operator_player_id != player_id) {
+            if (err != nullptr) {
+                *err = "not trustee player turn";
+            }
+            return std::nullopt;
+        }
+        if (room.state == RoomState::CallScore) {
+            req.action_type = PlayerActionType::CallScore;
+            req.call_score = 0;
+        } else if (room.state == RoomState::RobLandlord) {
+            req.action_type = PlayerActionType::RobLandlord;
+            req.rob = 0;
+        } else if (room.state == RoomState::Playing) {
+            if (room.last_play_cards.empty() || room.last_play_player_id == player_id) {
+                auto hand_it = room.hands.find(player_id);
+                if (hand_it == room.hands.end() || hand_it->second.empty()) {
+                    if (err != nullptr) {
+                        *err = "trustee hand empty";
+                    }
+                    return std::nullopt;
+                }
+                req.action_type = PlayerActionType::PlayCards;
+                req.cards = {hand_it->second.front()};
+            } else {
+                const CardCombo prev_combo = DdzRuleEngine::Analyze(room.last_play_cards);
+                bool found = false;
+                auto hand_it = room.hands.find(player_id);
+                if (hand_it != room.hands.end()) {
+                    for (const auto c : hand_it->second) {
+                        CardCombo challenge = DdzRuleEngine::Analyze({c});
+                        if (challenge.valid && DdzRuleEngine::CanBeat(challenge, prev_combo)) {
+                            req.action_type = PlayerActionType::PlayCards;
+                            req.cards = {c};
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if (!found) {
+                    req.action_type = PlayerActionType::Pass;
+                }
+            }
+        } else {
+            if (err != nullptr) {
+                *err = "room state not support trustee action";
+            }
+            return std::nullopt;
+        }
+    }
+    return ApplyPlayerAction(room_id, player_id, req, err);
+}
+
+std::optional<int64_t> RoomManager::PickWinnerForOfflineLose(int64_t room_id, int64_t loser_player_id) const {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto rit = rooms_.find(room_id);
+    if (rit == rooms_.end()) {
+        return std::nullopt;
+    }
+    for (const auto pid : rit->second.players) {
+        if (pid != loser_player_id) {
+            return pid;
+        }
+    }
+    return std::nullopt;
+}
+
 bool RoomManager::MarkSettling(int64_t room_id) {
     std::lock_guard<std::mutex> lock(mu_);
     auto it = rooms_.find(room_id);
@@ -455,6 +661,7 @@ bool RoomManager::MarkSettling(int64_t room_id) {
         return false;
     }
     it->second.state = RoomState::Settling;
+    BumpSnapshotVersion(&it->second, false);
     return true;
 }
 
@@ -465,6 +672,7 @@ bool RoomManager::MarkFinished(int64_t room_id) {
         return false;
     }
     it->second.state = RoomState::Finished;
+    BumpSnapshotVersion(&it->second, false);
     return true;
 }
 

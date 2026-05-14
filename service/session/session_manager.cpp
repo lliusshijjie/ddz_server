@@ -18,6 +18,7 @@ std::optional<int64_t> SessionManager::BindLogin(int64_t player_id, int64_t conn
     s.online = true;
     s.login_time_ms = now_ms;
     s.last_heartbeat_ms = now_ms;
+    s.offline_at_ms = 0;
 
     conn_to_player_[connection_id] = player_id;
     return old_conn;
@@ -42,6 +43,7 @@ std::optional<int64_t> SessionManager::RebindForReconnect(int64_t player_id, int
     it->second.connection_id = new_connection_id;
     it->second.online = true;
     it->second.last_heartbeat_ms = now_ms;
+    it->second.offline_at_ms = 0;
     conn_to_player_[new_connection_id] = player_id;
     return old_conn;
 }
@@ -78,6 +80,16 @@ std::optional<Session> SessionManager::GetSessionByPlayer(int64_t player_id) con
     return it->second;
 }
 
+std::vector<Session> SessionManager::GetAllSessions() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    std::vector<Session> out;
+    out.reserve(player_to_session_.size());
+    for (const auto& item : player_to_session_) {
+        out.push_back(item.second);
+    }
+    return out;
+}
+
 bool SessionManager::UpdateHeartbeatByConnection(int64_t connection_id, int64_t now_ms) {
     std::lock_guard<std::mutex> lock(mu_);
     auto it = conn_to_player_.find(connection_id);
@@ -107,6 +119,7 @@ bool SessionManager::MarkOfflineByConnection(int64_t connection_id, int64_t now_
     }
     sit->second.online = false;
     sit->second.last_heartbeat_ms = now_ms;
+    sit->second.offline_at_ms = now_ms;
     return true;
 }
 

@@ -18,6 +18,7 @@ add_library(ddz_core
     service/player/player_manager.cpp
     service/login/login_service.cpp
     service/reconnect/reconnect_service.cpp
+    service/observability/observability_service.cpp
     service/rule/ddz_rule_engine.cpp
     service/room/room_manager.cpp
     service/match/match_manager.cpp
@@ -111,6 +112,12 @@ add_executable(test_p3_room_snapshot
 target_link_libraries(test_p3_room_snapshot PRIVATE ddz_core)
 add_test(NAME p3_room_snapshot COMMAND test_p3_room_snapshot)
 
+add_executable(test_p3_offline_trustee_policy
+    tests/p3/test_offline_trustee_policy.cpp
+)
+target_link_libraries(test_p3_offline_trustee_policy PRIVATE ddz_core)
+add_test(NAME p3_offline_trustee_policy COMMAND test_p3_offline_trustee_policy)
+
 add_executable(test_p4_storage_service
     tests/p4/test_storage_service.cpp
 )
@@ -158,6 +165,18 @@ add_executable(test_p5_match_manager_stress
 )
 target_link_libraries(test_p5_match_manager_stress PRIVATE ddz_core)
 add_test(NAME p5_match_manager_stress COMMAND test_p5_match_manager_stress)
+
+add_executable(test_p5_fault_drills
+    tests/p5/test_fault_drills.cpp
+)
+target_link_libraries(test_p5_fault_drills PRIVATE ddz_core)
+add_test(NAME p5_fault_drills COMMAND test_p5_fault_drills)
+
+add_executable(test_p5_observability_service
+    tests/p5/test_observability_service.cpp
+)
+target_link_libraries(test_p5_observability_service PRIVATE ddz_core)
+add_test(NAME p5_observability_service COMMAND test_p5_observability_service)
 
 add_executable(test_p6_mysql_dao
     tests/p6/test_mysql_dao.cpp

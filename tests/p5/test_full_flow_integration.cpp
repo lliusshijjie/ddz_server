@@ -52,7 +52,10 @@ int main() {
     // 3) player 1002 disconnect + reconnect
     assert(session_manager.MarkOfflineByConnection(2002, 300));
     player_manager.ForceState(1002, ddz::PlayerState::Offline);
-    const auto rc = reconnect_service.HandleReconnect(2102, "token=" + token_1002, 301);
+    const auto rc = reconnect_service.HandleReconnect(
+        2102,
+        "player_id=1002;token=" + token_1002 + ";room_id=" + std::to_string(room_id) + ";last_snapshot_version=1",
+        301);
     assert(rc.code == ddz::ErrorCode::OK);
     assert(rc.player_id == 1002);
     assert(rc.room_id == room_id);

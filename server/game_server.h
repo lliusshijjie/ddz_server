@@ -12,6 +12,7 @@
 #include "service/login/login_service.h"
 #include "service/match/match_service.h"
 #include "service/match/match_manager.h"
+#include "service/observability/observability_service.h"
 #include "service/player/player_manager.h"
 #include "service/redis/redis_optional_store.h"
 #include "service/reconnect/reconnect_service.h"
@@ -74,6 +75,7 @@ private:
     RoomManager room_manager_;
     StorageService storage_service_;
     RedisOptionalStore redis_store_;
+    ObservabilityService observability_;
     AuthTokenService auth_token_service_;
     LoginService login_service_{session_manager_, player_manager_, auth_token_service_, &redis_store_};
     MatchService match_service_{session_manager_, player_manager_, match_manager_, room_manager_};

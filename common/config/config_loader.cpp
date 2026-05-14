@@ -127,6 +127,16 @@ bool ConfigLoader::LoadFromFile(const std::string& path, AppConfig& out, std::st
                 } else if (key == "token_ttl_seconds") {
                     out.auth.token_ttl_seconds = std::stoll(value);
                 }
+            } else if (section == "observability") {
+                if (key == "enable_structured_log") {
+                    out.observability.enable_structured_log = ParseBool(value);
+                } else if (key == "metrics_report_interval_ms") {
+                    out.observability.metrics_report_interval_ms = std::stoll(value);
+                }
+            } else if (section == "perf") {
+                if (key == "soft_threshold_enabled") {
+                    out.perf.soft_threshold_enabled = ParseBool(value);
+                }
             }
         }
     } catch (const std::exception& ex) {

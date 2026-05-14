@@ -29,3 +29,10 @@ redis:
 auth:
   token_secret: "dev_change_me"
   token_ttl_seconds: 604800
+
+observability:
+  enable_structured_log: true
+  metrics_report_interval_ms: 30000
+
+perf:
+  soft_threshold_enabled: true

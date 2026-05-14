@@ -24,7 +24,12 @@ int main() {
             << "  dir: ./logs_test\n"
             << "auth:\n"
             << "  token_secret: \"unit_secret\"\n"
-            << "  token_ttl_seconds: 12345\n";
+            << "  token_ttl_seconds: 12345\n"
+            << "observability:\n"
+            << "  enable_structured_log: false\n"
+            << "  metrics_report_interval_ms: 15000\n"
+            << "perf:\n"
+            << "  soft_threshold_enabled: false\n";
     }
 
     ddz::AppConfig cfg;
@@ -44,8 +49,10 @@ int main() {
     assert(cfg.log.dir == "./logs_test");
     assert(cfg.auth.token_secret == "unit_secret");
     assert(cfg.auth.token_ttl_seconds == 12345);
+    assert(cfg.observability.enable_structured_log == false);
+    assert(cfg.observability.metrics_report_interval_ms == 15000);
+    assert(cfg.perf.soft_threshold_enabled == false);
 
     std::cout << "test_p0_config_loader passed" << std::endl;
     return 0;
 }
-
