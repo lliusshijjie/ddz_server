@@ -31,6 +31,12 @@ std::string Unquote(std::string s) {
     return s;
 }
 
+bool ParseBool(const std::string& s) {
+    std::string v = s;
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return v == "1" || v == "true" || v == "yes" || v == "on";
+}
+
 }  // namespace
 
 bool ConfigLoader::LoadFromFile(const std::string& path, AppConfig& out, std::string* err) {
@@ -85,6 +91,34 @@ bool ConfigLoader::LoadFromFile(const std::string& path, AppConfig& out, std::st
                 } else if (key == "dir") {
                     out.log.dir = value;
                 }
+            } else if (section == "mysql") {
+                if (key == "enabled") {
+                    out.mysql.enabled = ParseBool(value);
+                } else if (key == "host") {
+                    out.mysql.host = value;
+                } else if (key == "port") {
+                    out.mysql.port = static_cast<uint16_t>(std::stoul(value));
+                } else if (key == "user") {
+                    out.mysql.user = value;
+                } else if (key == "password") {
+                    out.mysql.password = value;
+                } else if (key == "database") {
+                    out.mysql.database = value;
+                } else if (key == "pool_size") {
+                    out.mysql.pool_size = std::stoi(value);
+                }
+            } else if (section == "redis") {
+                if (key == "enabled") {
+                    out.redis.enabled = ParseBool(value);
+                } else if (key == "host") {
+                    out.redis.host = value;
+                } else if (key == "port") {
+                    out.redis.port = static_cast<uint16_t>(std::stoul(value));
+                } else if (key == "db") {
+                    out.redis.db = std::stoi(value);
+                } else if (key == "password") {
+                    out.redis.password = value;
+                }
             }
         }
     } catch (const std::exception& ex) {
@@ -100,4 +134,3 @@ bool ConfigLoader::LoadFromFile(const std::string& path, AppConfig& out, std::st
 }
 
 }  // namespace ddz
-

@@ -31,6 +31,14 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
         return false;
     }
 
+    std::string storage_err;
+    if (!storage_service_.Init(config_, &storage_err)) {
+        if (err != nullptr) *err = storage_err;
+        running_.store(false);
+        Logger::Instance().Shutdown();
+        return false;
+    }
+
     RegisterHandlers();
     tcp_server_ = std::make_unique<TcpServer>(config_.server.host, config_.server.port, config_.server.max_packet_size);
     tcp_server_->SetMessageCallback([this](int64_t connection_id, const Packet& packet) { OnMessage(connection_id, packet); });

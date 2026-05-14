@@ -9,3 +9,18 @@ log:
   level: info
   dir: ./logs
 
+mysql:
+  enabled: true
+  host: 127.0.0.1
+  port: 3306
+  user: ddz
+  password: ddz_pass
+  database: ddz
+  pool_size: 4
+
+redis:
+  enabled: false
+  host: 127.0.0.1
+  port: 6379
+  db: 0
+  password: ""

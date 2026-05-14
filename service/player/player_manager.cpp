@@ -86,6 +86,29 @@ bool PlayerManager::AddCoin(int64_t player_id, int64_t delta, int64_t* after_coi
     return true;
 }
 
+bool PlayerManager::BatchAddCoin(const std::vector<std::pair<int64_t, int64_t>>& changes, std::vector<int64_t>* after_coins) {
+    std::lock_guard<std::mutex> lock(mu_);
+    for (const auto& change : changes) {
+        const auto it = players_.find(change.first);
+        if (it == players_.end()) {
+            return false;
+        }
+    }
+
+    if (after_coins != nullptr) {
+        after_coins->clear();
+        after_coins->reserve(changes.size());
+    }
+    for (const auto& change : changes) {
+        PlayerData& player = players_[change.first];
+        player.coin += change.second;
+        if (after_coins != nullptr) {
+            after_coins->push_back(player.coin);
+        }
+    }
+    return true;
+}
+
 bool PlayerManager::IsTransitionAllowed(PlayerState from, PlayerState to) const {
     if (from == to) {
         return true;

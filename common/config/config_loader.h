@@ -18,9 +18,29 @@ struct LogConfig {
     std::string dir = "./logs";
 };
 
+struct MysqlConfig {
+    bool enabled = false;
+    std::string host = "127.0.0.1";
+    uint16_t port = 3306;
+    std::string user = "ddz";
+    std::string password = "ddz_pass";
+    std::string database = "ddz";
+    int pool_size = 4;
+};
+
+struct RedisConfig {
+    bool enabled = false;
+    std::string host = "127.0.0.1";
+    uint16_t port = 6379;
+    int db = 0;
+    std::string password;
+};
+
 struct AppConfig {
     ServerConfig server;
     LogConfig log;
+    MysqlConfig mysql;
+    RedisConfig redis;
 };
 
 class ConfigLoader {
@@ -29,4 +49,3 @@ public:
 };
 
 }  // namespace ddz
-

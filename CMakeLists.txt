@@ -19,7 +19,12 @@ add_library(ddz_core
     service/room/room_manager.cpp
     service/match/match_manager.cpp
     service/match/match_service.cpp
+    service/storage/mysql/mysql_connection_pool.cpp
+    service/storage/dao/player_dao.cpp
+    service/storage/dao/game_record_dao.cpp
+    service/storage/dao/coin_log_dao.cpp
     service/storage/storage_service.cpp
+    service/redis/redis_optional_store.cpp
     service/settlement/settlement_service.cpp
     server/game_server.cpp
 )
@@ -120,3 +125,21 @@ add_executable(test_p5_match_manager_stress
 )
 target_link_libraries(test_p5_match_manager_stress PRIVATE ddz_core)
 add_test(NAME p5_match_manager_stress COMMAND test_p5_match_manager_stress)
+
+add_executable(test_p6_mysql_dao
+    tests/p6/test_mysql_dao.cpp
+)
+target_link_libraries(test_p6_mysql_dao PRIVATE ddz_core)
+add_test(NAME p6_mysql_dao COMMAND test_p6_mysql_dao)
+
+add_executable(test_p6_settlement_transaction
+    tests/p6/test_settlement_transaction.cpp
+)
+target_link_libraries(test_p6_settlement_transaction PRIVATE ddz_core)
+add_test(NAME p6_settlement_transaction COMMAND test_p6_settlement_transaction)
+
+add_executable(test_p6_redis_optional_store
+    tests/p6/test_redis_optional_store.cpp
+)
+target_link_libraries(test_p6_redis_optional_store PRIVATE ddz_core)
+add_test(NAME p6_redis_optional_store COMMAND test_p6_redis_optional_store)

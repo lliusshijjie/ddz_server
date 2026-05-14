@@ -4,7 +4,9 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <unordered_map>
+#include <vector>
 
 namespace ddz {
 
@@ -34,6 +36,7 @@ public:
     bool SetState(int64_t player_id, PlayerState next);
     void ForceState(int64_t player_id, PlayerState next);
     bool AddCoin(int64_t player_id, int64_t delta, int64_t* after_coin);
+    bool BatchAddCoin(const std::vector<std::pair<int64_t, int64_t>>& changes, std::vector<int64_t>* after_coins);
 
 private:
     bool IsTransitionAllowed(PlayerState from, PlayerState to) const;

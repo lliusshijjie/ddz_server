@@ -1,6 +1,7 @@
 #include "service/settlement/settlement_service.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace ddz {
 
@@ -34,47 +35,67 @@ SettlementResult SettlementService::Settle(const SettlementRequest& req, int64_t
         }
 
         const int64_t winner_gain = req.base_coin * static_cast<int64_t>(room.players.size() - 1);
+        SettlementPersistRequest persist_req;
+        persist_req.room_id = room.room_id;
+        persist_req.game_mode = room.mode;
+        persist_req.winner_player_id = req.winner_player_id;
+        persist_req.started_at_ms = now_ms;
+        persist_req.ended_at_ms = now_ms;
+        persist_req.players = room.players;
 
-        GameRecord record;
-        record.room_id = room.room_id;
-        record.game_mode = room.mode;
-        record.winner_player_id = req.winner_player_id;
-        record.started_at_ms = now_ms;
-        record.ended_at_ms = now_ms;
-        record.players = room.players;
-
-        const int64_t record_id = storage_service_.SaveGameRecord(record);
-        result.record_id = record_id;
-
+        std::vector<std::pair<int64_t, int64_t>> coin_changes_for_memory;
+        std::vector<int64_t> before_coins;
+        before_coins.reserve(room.players.size());
         for (const auto player_id : room.players) {
-            const int64_t delta = (player_id == req.winner_player_id) ? winner_gain : -req.base_coin;
-            const int64_t before = player_manager_.GetCoin(player_id);
-            int64_t after = before;
-            if (!player_manager_.AddCoin(player_id, delta, &after)) {
+            const auto player = player_manager_.GetPlayer(player_id);
+            if (!player.has_value()) {
                 result.code = ErrorCode::SETTLEMENT_FAILED;
                 break;
             }
-            storage_service_.SavePlayerCoin(player_id, after);
 
-            CoinLog log;
-            log.player_id = player_id;
-            log.room_id = room.room_id;
-            log.change_amount = delta;
-            log.before_coin = before;
-            log.after_coin = after;
-            log.created_at_ms = now_ms;
-            storage_service_.SaveCoinLog(log);
+            const int64_t delta = (player_id == req.winner_player_id) ? winner_gain : -req.base_coin;
+            const int64_t before = player->coin;
+            const int64_t after = before + delta;
 
-            result.players.push_back(SettlementPlayerResult{
-                player_id, delta, after
+            persist_req.coin_changes.push_back(SettlementCoinChange{
+                player_id, room.room_id, delta, before, after
             });
-
-            session_manager_.ClearRoomId(player_id);
-            player_manager_.ForceState(player_id, PlayerState::Lobby);
+            coin_changes_for_memory.push_back({player_id, delta});
+            before_coins.push_back(before);
+        }
+        if (persist_req.coin_changes.size() != room.players.size()) {
+            break;
         }
 
-        if (result.players.size() != room.players.size()) {
+        std::string persist_err;
+        if (!storage_service_.PersistSettlementTransaction(persist_req, &result.record_id, &persist_err)) {
+            result.code = ErrorCode::SETTLEMENT_FAILED;
             break;
+        }
+
+        std::vector<int64_t> after_coins;
+        if (!player_manager_.BatchAddCoin(coin_changes_for_memory, &after_coins) ||
+            after_coins.size() != room.players.size()) {
+            result.code = ErrorCode::SETTLEMENT_FAILED;
+            for (size_t i = 0; i < coin_changes_for_memory.size() && i < before_coins.size(); ++i) {
+                const int64_t current = player_manager_.GetCoin(coin_changes_for_memory[i].first);
+                const int64_t rollback_delta = before_coins[i] - current;
+                int64_t ignored = 0;
+                player_manager_.AddCoin(coin_changes_for_memory[i].first, rollback_delta, &ignored);
+            }
+            break;
+        }
+
+        result.players.clear();
+        for (size_t i = 0; i < room.players.size(); ++i) {
+            const auto player_id = room.players[i];
+            result.players.push_back(SettlementPlayerResult{
+                player_id,
+                coin_changes_for_memory[i].second,
+                after_coins[i]
+            });
+            session_manager_.ClearRoomId(player_id);
+            player_manager_.ForceState(player_id, PlayerState::Lobby);
         }
 
         room_manager_.DestroyRoom(room.room_id);
