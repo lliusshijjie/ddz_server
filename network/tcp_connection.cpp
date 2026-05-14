@@ -56,7 +56,10 @@ void TcpConnection::Start() {
     if (running_.exchange(true)) {
         return;
     }
-    read_thread_ = std::thread(&TcpConnection::ReadLoop, this);
+    auto self = shared_from_this();
+    read_thread_ = std::thread([self]() {
+        self->ReadLoop();
+    });
 }
 
 void TcpConnection::Stop() {
@@ -93,7 +96,7 @@ bool TcpConnection::SendPacket(const Packet& packet) {
     while (sent_total < encoded.size()) {
 #ifdef _WIN32
         const int sent = send(socket_handle_,
-                              reinterpret_cast<const char*>(encoded.data() + sent_total),
+                              reinterpret_cast<const char*>(  encoded.data() + sent_total),
                               static_cast<int>(encoded.size() - sent_total),
                               0);
 #else

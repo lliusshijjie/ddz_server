@@ -33,7 +33,7 @@ public:
 
 private:
     void AcceptLoop();
-    void RemoveConnection(int64_t connection_id);
+    void RemoveConnection(int64_t connection_id, bool stop_connection = true);
     void CloseSocketInternal();
 
 private:

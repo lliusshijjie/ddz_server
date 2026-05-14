@@ -169,6 +169,12 @@ void GameServer::RegisterHandlers() {
             return true;
         }
 
+        const auto sender_room_id = room_manager_.GetRoomIdByPlayer(sender_player_id.value());
+        if (!sender_room_id.has_value() || sender_room_id.value() != settle_req.room_id) {
+            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PLAYER_STATE))}});
+            return true;
+        }
+
         const SettlementResult settle_result = settlement_service_.Settle(settle_req, NowMs());
         response.body = BuildKvBody({
             {"code", std::to_string(static_cast<int32_t>(settle_result.code))},

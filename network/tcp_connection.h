@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -20,7 +21,7 @@ constexpr SocketHandle kInvalidSocket = -1;
 
 namespace ddz {
 
-class TcpConnection {
+class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 public:
     using MessageCallback = std::function<void(int64_t connection_id, const Packet&)>;
     using CloseCallback = std::function<void(int64_t connection_id)>;
@@ -60,4 +61,3 @@ private:
 };
 
 }  // namespace ddz
-

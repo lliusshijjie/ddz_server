@@ -1,5 +1,7 @@
 #include <cassert>
 #include <iostream>
+#include <atomic>
+#include <thread>
 
 #include "service/player/player_manager.h"
 #include "service/room/room_manager.h"
@@ -68,7 +70,42 @@ int main() {
     auto no_room = settlement_service.Settle(ddz::SettlementRequest{999999, 1001, 10}, 400);
     assert(no_room.code == ddz::ErrorCode::ROOM_NOT_FOUND);
 
+    // concurrent settlement on same room: only one should succeed
+    player_manager.UpsertPlayer(3001, "c1", 1000);
+    player_manager.UpsertPlayer(3002, "c2", 1000);
+    player_manager.UpsertPlayer(3003, "c3", 1000);
+    player_manager.ForceState(3001, ddz::PlayerState::InRoom);
+    player_manager.ForceState(3002, ddz::PlayerState::InRoom);
+    player_manager.ForceState(3003, ddz::PlayerState::InRoom);
+    session_manager.BindLogin(3001, 21, 500);
+    session_manager.BindLogin(3002, 22, 500);
+    session_manager.BindLogin(3003, 23, 500);
+
+    const int64_t room3 = room_manager.CreateRoom(3, {3001, 3002, 3003});
+    session_manager.SetRoomId(3001, room3);
+    session_manager.SetRoomId(3002, room3);
+    session_manager.SetRoomId(3003, room3);
+
+    std::atomic<bool> go{false};
+    ddz::SettlementResult a;
+    ddz::SettlementResult b;
+    std::thread t1([&]() {
+        while (!go.load()) {}
+        a = settlement_service.Settle(ddz::SettlementRequest{room3, 3001, 10}, 600);
+    });
+    std::thread t2([&]() {
+        while (!go.load()) {}
+        b = settlement_service.Settle(ddz::SettlementRequest{room3, 3001, 10}, 601);
+    });
+    go.store(true);
+    t1.join();
+    t2.join();
+
+    const bool a_ok = (a.code == ddz::ErrorCode::OK);
+    const bool b_ok = (b.code == ddz::ErrorCode::OK);
+    assert(a_ok != b_ok);
+    assert(!room_manager.GetRoomById(room3).has_value());
+
     std::cout << "test_p4_settlement_service passed" << std::endl;
     return 0;
 }
-

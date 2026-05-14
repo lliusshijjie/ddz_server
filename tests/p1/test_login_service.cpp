@@ -15,13 +15,17 @@ int main() {
         assert(r.code == ddz::ErrorCode::OK);
         assert(r.player_id == 1001);
         assert(r.nickname == "alice");
+        assert(r.coin == 1000);
         assert(!r.old_connection_to_kick.has_value());
         assert(sm.GetConnectionIdByPlayer(1001).value() == 10);
     }
 
+    assert(pm.AddCoin(1001, 250, nullptr));
+
     {
         const auto r = login.HandleLogin(11, "token=1001;nickname=alice2", 200);
         assert(r.code == ddz::ErrorCode::OK);
+        assert(r.coin == 1250);
         assert(r.old_connection_to_kick.has_value());
         assert(r.old_connection_to_kick.value() == 10);
         assert(sm.GetConnectionIdByPlayer(1001).value() == 11);
@@ -35,4 +39,3 @@ int main() {
     std::cout << "test_p1_login_service passed" << std::endl;
     return 0;
 }
-

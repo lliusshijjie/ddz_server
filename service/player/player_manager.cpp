@@ -5,6 +5,7 @@ namespace ddz {
 void PlayerManager::UpsertPlayer(int64_t player_id, const std::string& nickname, int64_t coin) {
     std::lock_guard<std::mutex> lock(mu_);
     PlayerData& player = players_[player_id];
+    const bool is_new_player = (player.player_id == 0);
     player.player_id = player_id;
     if (!nickname.empty()) {
         player.nickname = nickname;
@@ -14,7 +15,7 @@ void PlayerManager::UpsertPlayer(int64_t player_id, const std::string& nickname,
     }
     if (coin > 0) {
         player.coin = coin;
-    } else if (player.coin == 0) {
+    } else if (is_new_player && player.coin == 0) {
         player.coin = 1000;
     }
 }

@@ -27,8 +27,9 @@ LoginResult LoginService::HandleLogin(int64_t connection_id, const std::string& 
         nickname = nick_it->second;
     }
 
-    const int64_t coin = 1000;
-    player_manager_.UpsertPlayer(player_id, nickname, coin);
+    const auto existing_player = player_manager_.GetPlayer(player_id);
+    const int64_t coin = existing_player.has_value() ? existing_player->coin : 1000;
+    player_manager_.UpsertPlayer(player_id, nickname, existing_player.has_value() ? 0 : coin);
     player_manager_.ForceState(player_id, PlayerState::Lobby);
     const auto old_conn = session_manager_.BindLogin(player_id, connection_id, now_ms);
 
@@ -57,4 +58,3 @@ std::optional<int64_t> LoginService::ParsePlayerIdFromToken(const std::string& t
 }
 
 }  // namespace ddz
-

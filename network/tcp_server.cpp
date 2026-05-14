@@ -103,6 +103,7 @@ void TcpServer::Stop() {
     const bool was_running = running_.exchange(false);
     if (was_running && listen_socket_ != kInvalidSocket) {
         ShutdownSocket(listen_socket_);
+        CloseSocketInternal();
     }
 
     if (accept_thread_.joinable()) {
@@ -188,7 +189,7 @@ void TcpServer::AcceptLoop() {
                 }
             },
             [this](int64_t cid) {
-                RemoveConnection(cid);
+                RemoveConnection(cid, false);
                 if (on_close_ != nullptr) {
                     on_close_(cid);
                 }
@@ -203,7 +204,7 @@ void TcpServer::AcceptLoop() {
     }
 }
 
-void TcpServer::RemoveConnection(int64_t connection_id) {
+void TcpServer::RemoveConnection(int64_t connection_id, bool stop_connection) {
     std::shared_ptr<TcpConnection> conn;
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -214,7 +215,9 @@ void TcpServer::RemoveConnection(int64_t connection_id) {
         conn = it->second;
         connections_.erase(it);
     }
-    conn->Stop();
+    if (stop_connection) {
+        conn->Stop();
+    }
     Logger::Instance().Info("connection removed conn_id=" + std::to_string(connection_id));
 }
 

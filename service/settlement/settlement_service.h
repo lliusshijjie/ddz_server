@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
+#include <unordered_set>
 #include <unordered_map>
 #include <vector>
 
@@ -46,11 +48,16 @@ public:
     SettlementResult Settle(const SettlementRequest& req, int64_t now_ms);
 
 private:
+    bool TryBeginSettlement(int64_t room_id);
+    void EndSettlement(int64_t room_id);
+
+private:
     SessionManager& session_manager_;
     PlayerManager& player_manager_;
     RoomManager& room_manager_;
     StorageService& storage_service_;
+    std::mutex settle_mu_;
+    std::unordered_set<int64_t> settling_rooms_;
 };
 
 }  // namespace ddz
-
