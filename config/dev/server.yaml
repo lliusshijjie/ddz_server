@@ -1,0 +1,11 @@
+server:
+  host: 0.0.0.0
+  port: 9000
+  io_threads: 2
+  max_packet_size: 65536
+  heartbeat_timeout_ms: 30000
+
+log:
+  level: info
+  dir: ./logs
+

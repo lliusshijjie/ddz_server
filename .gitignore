@@ -1,0 +1,48 @@
+# Build output
+/build/
+/out/
+/bin/
+/lib/
+
+# CMake / Ninja / MSBuild generated files
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+CMakeFiles/
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.tlog
+*.lastbuildstate
+*.recipe
+
+# Binary artifacts
+*.obj
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.exe
+
+# Logs / runtime files
+/logs/
+*.log
+
+# Design docs (local only)
+/斗地主最小可行服务端设计文档.md
+/docs/*_实施方案.md
+
+# IDE/editor
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.swp
+*.tmp
