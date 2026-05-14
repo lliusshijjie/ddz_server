@@ -36,12 +36,16 @@ CMakeFiles/
 
 # Design docs (local only)
 /斗地主最小可行服务端设计文档.md
-/docs/*_实施方案.md
+/后续开发流程与迭代计划.md
+/docs
 
 # IDE/editor
 .vs/
 .idea/
 .vscode/
+.claude/
+.cursor/
+.codex/
 *.user
 *.suo
 *.swp

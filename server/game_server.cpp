@@ -5,6 +5,7 @@
 #include "common/util/kv_codec.h"
 #include "common/util/time_util.h"
 #include "log/logger.h"
+#include "network/packet_codec.h"
 
 namespace ddz {
 
@@ -20,6 +21,34 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
     std::string config_err;
     if (!ConfigLoader::LoadFromFile(config_path, config_, &config_err)) {
         if (err != nullptr) *err = config_err;
+        running_.store(false);
+        return false;
+    }
+    if (config_.server.max_packet_size < PacketCodec::kHeaderSize) {
+        if (err != nullptr) {
+            *err = "invalid server.max_packet_size, must be >= " + std::to_string(PacketCodec::kHeaderSize);
+        }
+        running_.store(false);
+        return false;
+    }
+    if (config_.server.heartbeat_timeout_ms <= 0) {
+        if (err != nullptr) {
+            *err = "invalid server.heartbeat_timeout_ms, must be > 0";
+        }
+        running_.store(false);
+        return false;
+    }
+    if (config_.server.match_timeout_ms <= 0) {
+        if (err != nullptr) {
+            *err = "invalid server.match_timeout_ms, must be > 0";
+        }
+        running_.store(false);
+        return false;
+    }
+    if (config_.auth.token_ttl_seconds <= 0) {
+        if (err != nullptr) {
+            *err = "invalid auth.token_ttl_seconds, must be > 0";
+        }
         running_.store(false);
         return false;
     }
@@ -53,7 +82,12 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
     }
 
     timer_thread_ = std::thread(&GameServer::TimerLoop, this);
-    Logger::Instance().Info("game server started");
+    Logger::Instance().Info(
+        "game server started host=" + config_.server.host +
+        " port=" + std::to_string(config_.server.port) +
+        " max_packet_size=" + std::to_string(config_.server.max_packet_size) +
+        " heartbeat_timeout_ms=" + std::to_string(config_.server.heartbeat_timeout_ms) +
+        " match_timeout_ms=" + std::to_string(config_.server.match_timeout_ms));
     return true;
 }
 
@@ -213,9 +247,22 @@ void GameServer::TimerLoop() {
 }
 
 void GameServer::OnMessage(int64_t connection_id, const Packet& packet) {
+    Logger::Instance().Info(
+        "recv conn_id=" + std::to_string(connection_id) +
+        " msg_id=" + std::to_string(packet.msg_id) +
+        " seq_id=" + std::to_string(packet.seq_id) +
+        " player_id=" + std::to_string(packet.player_id) +
+        " body_len=" + std::to_string(packet.body.size()));
+
     Packet response;
     const bool need_reply = dispatcher_.Dispatch(packet, response, connection_id);
     if (need_reply && tcp_server_ != nullptr) {
+        Logger::Instance().Info(
+            "send conn_id=" + std::to_string(connection_id) +
+            " msg_id=" + std::to_string(response.msg_id) +
+            " seq_id=" + std::to_string(response.seq_id) +
+            " player_id=" + std::to_string(response.player_id) +
+            " body_len=" + std::to_string(response.body.size()));
         if (!tcp_server_->SendPacket(connection_id, response)) {
             Logger::Instance().Warn("send response failed conn_id=" + std::to_string(connection_id));
         }

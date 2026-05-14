@@ -56,6 +56,12 @@ add_executable(test_p0_dispatcher_heartbeat
 target_link_libraries(test_p0_dispatcher_heartbeat PRIVATE ddz_core)
 add_test(NAME p0_dispatcher_heartbeat COMMAND test_p0_dispatcher_heartbeat)
 
+add_executable(test_p0_config_loader
+    tests/p0/test_config_loader.cpp
+)
+target_link_libraries(test_p0_config_loader PRIVATE ddz_core)
+add_test(NAME p0_config_loader COMMAND test_p0_config_loader)
+
 add_executable(test_p1_session_manager
     tests/p1/test_session_manager.cpp
 )
