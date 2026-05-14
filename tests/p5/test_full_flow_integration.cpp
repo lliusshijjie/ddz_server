@@ -17,19 +17,25 @@ int main() {
     ddz::RoomManager room_manager;
     ddz::MatchManager match_manager;
     ddz::StorageService storage_service;
+    ddz::AuthTokenService auth("integration_secret", 7 * 24 * 3600);
 
-    ddz::LoginService login_service(session_manager, player_manager);
+    ddz::LoginService login_service(session_manager, player_manager, auth);
     ddz::MatchService match_service(session_manager, player_manager, match_manager, room_manager);
-    ddz::ReconnectService reconnect_service(session_manager, player_manager, room_manager);
+    ddz::ReconnectService reconnect_service(session_manager, auth, player_manager, room_manager);
     ddz::SettlementService settlement_service(session_manager, player_manager, room_manager, storage_service);
 
     // 1) login 4 players
+    std::string token_1002;
     for (int i = 1; i <= 4; ++i) {
         const int64_t player_id = 1000 + i;
         const int64_t conn_id = 2000 + i;
-        const auto r = login_service.HandleLogin(conn_id, "token=" + std::to_string(player_id), 100 + i);
+        const auto r = login_service.HandleLogin(conn_id, "player_id=" + std::to_string(player_id), 100 + i);
         assert(r.code == ddz::ErrorCode::OK);
         assert(r.player_id == player_id);
+        assert(!r.token.empty());
+        if (player_id == 1002) {
+            token_1002 = r.token;
+        }
     }
 
     // 2) first 3 players match into a room
@@ -46,7 +52,7 @@ int main() {
     // 3) player 1002 disconnect + reconnect
     assert(session_manager.MarkOfflineByConnection(2002, 300));
     player_manager.ForceState(1002, ddz::PlayerState::Offline);
-    const auto rc = reconnect_service.HandleReconnect(2102, "token=1002", 301);
+    const auto rc = reconnect_service.HandleReconnect(2102, "token=" + token_1002, 301);
     assert(rc.code == ddz::ErrorCode::OK);
     assert(rc.player_id == 1002);
     assert(rc.room_id == room_id);
@@ -81,4 +87,3 @@ int main() {
     std::cout << "test_p5_full_flow_integration passed" << std::endl;
     return 0;
 }
-

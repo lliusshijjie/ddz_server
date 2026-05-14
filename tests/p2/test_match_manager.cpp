@@ -21,7 +21,15 @@ int main() {
     assert(mm.Cancel(2001));
     assert(!mm.IsMatching(2001));
 
+    assert(mm.Join(ddz::MatchPlayer{3001, 100, 1000, 3}));
+    assert(mm.Join(ddz::MatchPlayer{3002, 200, 1000, 4}));
+    auto timeout_players = mm.PopTimeoutPlayers(30150, 30000);
+    assert(timeout_players.size() == 1);
+    assert(timeout_players[0].player_id == 3001);
+    assert(timeout_players[0].mode == 3);
+    assert(!mm.IsMatching(3001));
+    assert(mm.IsMatching(3002));
+
     std::cout << "test_p2_match_manager passed" << std::endl;
     return 0;
 }
-

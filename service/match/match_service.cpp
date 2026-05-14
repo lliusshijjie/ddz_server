@@ -24,6 +24,12 @@ MatchResult MatchService::HandleMatch(int64_t connection_id, const std::string& 
     result.mode = mode;
 
     if (player_manager_.GetState(player_id) != PlayerState::Lobby) {
+        if (player_manager_.GetState(player_id) == PlayerState::InRoom ||
+            player_manager_.GetState(player_id) == PlayerState::Playing ||
+            player_manager_.GetState(player_id) == PlayerState::Settlement) {
+            result.code = ErrorCode::PLAYER_ALREADY_IN_ROOM;
+            return result;
+        }
         result.code = ErrorCode::INVALID_PLAYER_STATE;
         return result;
     }
@@ -83,6 +89,19 @@ CancelMatchResult MatchService::HandleCancelMatch(int64_t connection_id) {
     return result;
 }
 
+std::vector<MatchTimeoutEvent> MatchService::HandleMatchTimeout(int64_t now_ms, int64_t timeout_ms) {
+    std::vector<MatchTimeoutEvent> out;
+    const auto timed_out = match_manager_.PopTimeoutPlayers(now_ms, timeout_ms);
+    out.reserve(timed_out.size());
+    for (const auto& p : timed_out) {
+        if (player_manager_.GetState(p.player_id) == PlayerState::Matching) {
+            player_manager_.ForceState(p.player_id, PlayerState::Lobby);
+        }
+        out.push_back(MatchTimeoutEvent{p.player_id, p.mode});
+    }
+    return out;
+}
+
 std::optional<int32_t> MatchService::ParseMode(const std::string& request_body) {
     const auto kv = ParseKvBody(request_body);
     const auto it = kv.find("mode");
@@ -101,4 +120,3 @@ std::optional<int32_t> MatchService::ParseMode(const std::string& request_body) 
 }
 
 }  // namespace ddz
-

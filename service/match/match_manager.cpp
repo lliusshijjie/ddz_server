@@ -62,6 +62,34 @@ std::optional<std::vector<int64_t>> MatchManager::TryPopMatchedPlayers(int32_t m
     return players;
 }
 
+std::vector<MatchPlayer> MatchManager::PopTimeoutPlayers(int64_t now_ms, int64_t timeout_ms) {
+    std::lock_guard<std::mutex> lock(mu_);
+    std::vector<MatchPlayer> out;
+    if (timeout_ms <= 0) {
+        return out;
+    }
+
+    auto pop_from_queue = [&](std::deque<MatchPlayer>* q) {
+        if (q == nullptr) {
+            return;
+        }
+        auto it = q->begin();
+        while (it != q->end()) {
+            if (now_ms - it->join_time_ms >= timeout_ms) {
+                matching_index_.erase(it->player_id);
+                out.push_back(*it);
+                it = q->erase(it);
+            } else {
+                ++it;
+            }
+        }
+    };
+
+    pop_from_queue(&queue_three_);
+    pop_from_queue(&queue_four_);
+    return out;
+}
+
 int MatchManager::RequiredCount(int32_t mode) {
     if (mode == 3) return 3;
     if (mode == 4) return 4;
@@ -81,4 +109,3 @@ const std::deque<MatchPlayer>* MatchManager::QueueByMode(int32_t mode) const {
 }
 
 }  // namespace ddz
-

@@ -7,12 +7,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(ddz_core
     common/config/config_loader.cpp
+    common/util/sha256.cpp
     log/logger.cpp
     network/packet_codec.cpp
     network/dispatcher.cpp
     network/tcp_connection.cpp
     network/tcp_server.cpp
     service/session/session_manager.cpp
+    service/login/auth_token_service.cpp
     service/player/player_manager.cpp
     service/login/login_service.cpp
     service/reconnect/reconnect_service.cpp

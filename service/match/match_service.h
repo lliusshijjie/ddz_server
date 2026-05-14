@@ -27,6 +27,11 @@ struct CancelMatchResult {
     int64_t player_id = 0;
 };
 
+struct MatchTimeoutEvent {
+    int64_t player_id = 0;
+    int32_t mode = 0;
+};
+
 class MatchService {
 public:
     MatchService(SessionManager& session_manager,
@@ -40,6 +45,7 @@ public:
 
     MatchResult HandleMatch(int64_t connection_id, const std::string& request_body, int64_t now_ms);
     CancelMatchResult HandleCancelMatch(int64_t connection_id);
+    std::vector<MatchTimeoutEvent> HandleMatchTimeout(int64_t now_ms, int64_t timeout_ms);
 
 private:
     static std::optional<int32_t> ParseMode(const std::string& request_body);
@@ -52,4 +58,3 @@ private:
 };
 
 }  // namespace ddz
-

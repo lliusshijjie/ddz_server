@@ -39,6 +39,7 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
         return false;
     }
 
+    auth_token_service_.Configure(config_.auth.token_secret, config_.auth.token_ttl_seconds);
     RegisterHandlers();
     tcp_server_ = std::make_unique<TcpServer>(config_.server.host, config_.server.port, config_.server.max_packet_size);
     tcp_server_->SetMessageCallback([this](int64_t connection_id, const Packet& packet) { OnMessage(connection_id, packet); });
@@ -83,7 +84,9 @@ void GameServer::RegisterHandlers() {
             {"code", std::to_string(static_cast<int32_t>(r.code))},
             {"player_id", std::to_string(r.player_id)},
             {"nickname", r.nickname},
-            {"coin", std::to_string(r.coin)}
+            {"coin", std::to_string(r.coin)},
+            {"token", r.token},
+            {"expire_at_ms", std::to_string(r.expire_at_ms)}
         });
         if (r.old_connection_to_kick.has_value() &&
             r.old_connection_to_kick.value() != connection_id &&
@@ -201,6 +204,10 @@ void GameServer::TimerLoop() {
         if (tcp_server_ != nullptr) {
             tcp_server_->CloseIdleConnections(config_.server.heartbeat_timeout_ms);
         }
+        const auto timeout_events = match_service_.HandleMatchTimeout(NowMs(), config_.server.match_timeout_ms);
+        if (!timeout_events.empty()) {
+            NotifyMatchTimeout(timeout_events);
+        }
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
@@ -253,6 +260,27 @@ void GameServer::NotifyMatchSuccess(int64_t room_id, int32_t mode, const std::ve
             {"room_id", std::to_string(room_id)},
             {"mode", std::to_string(mode)},
             {"players", players_joined}
+        });
+        tcp_server_->SendPacket(conn_id.value(), notify);
+    }
+}
+
+void GameServer::NotifyMatchTimeout(const std::vector<MatchTimeoutEvent>& timeout_players) {
+    if (tcp_server_ == nullptr) {
+        return;
+    }
+    for (const auto& event : timeout_players) {
+        const auto conn_id = session_manager_.GetConnectionIdByPlayer(event.player_id);
+        if (!conn_id.has_value()) {
+            continue;
+        }
+        Packet notify;
+        notify.msg_id = MSG_MATCH_TIMEOUT_NOTIFY;
+        notify.seq_id = 0;
+        notify.player_id = event.player_id;
+        notify.body = BuildKvBody({
+            {"code", std::to_string(static_cast<int32_t>(ErrorCode::MATCH_TIMEOUT))},
+            {"mode", std::to_string(event.mode)}
         });
         tcp_server_->SendPacket(conn_id.value(), notify);
     }

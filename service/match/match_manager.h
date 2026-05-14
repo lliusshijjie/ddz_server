@@ -22,6 +22,7 @@ public:
     bool Cancel(int64_t player_id);
     bool IsMatching(int64_t player_id) const;
     std::optional<std::vector<int64_t>> TryPopMatchedPlayers(int32_t mode);
+    std::vector<MatchPlayer> PopTimeoutPlayers(int64_t now_ms, int64_t timeout_ms);
 
 private:
     static int RequiredCount(int32_t mode);
@@ -36,4 +37,3 @@ private:
 };
 
 }  // namespace ddz
-

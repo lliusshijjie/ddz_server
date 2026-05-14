@@ -32,6 +32,7 @@ public:
     static constexpr uint32_t MSG_CANCEL_MATCH_REQ = 2003;
     static constexpr uint32_t MSG_CANCEL_MATCH_RESP = 2004;
     static constexpr uint32_t MSG_MATCH_SUCCESS_NOTIFY = 2005;
+    static constexpr uint32_t MSG_MATCH_TIMEOUT_NOTIFY = 2006;
     static constexpr uint32_t MSG_ROOM_SNAPSHOT_NOTIFY = 3001;
     static constexpr uint32_t MSG_PLAYER_RECONNECT_NOTIFY = 3003;
     static constexpr uint32_t MSG_GAME_OVER_NOTIFY = 5001;
@@ -52,6 +53,7 @@ private:
     void OnMessage(int64_t connection_id, const Packet& packet);
     void OnConnectionClosed(int64_t connection_id);
     void NotifyMatchSuccess(int64_t room_id, int32_t mode, const std::vector<int64_t>& players);
+    void NotifyMatchTimeout(const std::vector<MatchTimeoutEvent>& timeout_players);
     void NotifyRoomSnapshot(int64_t player_id, int64_t connection_id, const RoomSnapshot& snapshot);
     void NotifyPlayerReconnectInRoom(int64_t room_id, int64_t reconnect_player_id);
     void NotifyGameOver(const SettlementResult& result);
@@ -65,9 +67,10 @@ private:
     MatchManager match_manager_;
     RoomManager room_manager_;
     StorageService storage_service_;
-    LoginService login_service_{session_manager_, player_manager_};
+    AuthTokenService auth_token_service_;
+    LoginService login_service_{session_manager_, player_manager_, auth_token_service_};
     MatchService match_service_{session_manager_, player_manager_, match_manager_, room_manager_};
-    ReconnectService reconnect_service_{session_manager_, player_manager_, room_manager_};
+    ReconnectService reconnect_service_{session_manager_, auth_token_service_, player_manager_, room_manager_};
     SettlementService settlement_service_{session_manager_, player_manager_, room_manager_, storage_service_};
     std::atomic<bool> running_{false};
     std::thread timer_thread_;

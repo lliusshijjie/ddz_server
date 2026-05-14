@@ -4,6 +4,7 @@ server:
   io_threads: 2
   max_packet_size: 65536
   heartbeat_timeout_ms: 30000
+  match_timeout_ms: 30000
 
 log:
   level: info
@@ -24,3 +25,7 @@ redis:
   port: 6379
   db: 0
   password: ""
+
+auth:
+  token_secret: "dev_change_me"
+  token_ttl_seconds: 604800

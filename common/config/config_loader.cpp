@@ -84,6 +84,8 @@ bool ConfigLoader::LoadFromFile(const std::string& path, AppConfig& out, std::st
                     out.server.max_packet_size = static_cast<uint32_t>(std::stoul(value));
                 } else if (key == "heartbeat_timeout_ms") {
                     out.server.heartbeat_timeout_ms = std::stoll(value);
+                } else if (key == "match_timeout_ms") {
+                    out.server.match_timeout_ms = std::stoll(value);
                 }
             } else if (section == "log") {
                 if (key == "level") {
@@ -118,6 +120,12 @@ bool ConfigLoader::LoadFromFile(const std::string& path, AppConfig& out, std::st
                     out.redis.db = std::stoi(value);
                 } else if (key == "password") {
                     out.redis.password = value;
+                }
+            } else if (section == "auth") {
+                if (key == "token_secret") {
+                    out.auth.token_secret = value;
+                } else if (key == "token_ttl_seconds") {
+                    out.auth.token_ttl_seconds = std::stoll(value);
                 }
             }
         }

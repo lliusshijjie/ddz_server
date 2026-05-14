@@ -10,7 +10,8 @@ int main() {
     ddz::SessionManager session_manager;
     ddz::PlayerManager player_manager;
     ddz::RoomManager room_manager;
-    ddz::ReconnectService reconnect_service(session_manager, player_manager, room_manager);
+    ddz::AuthTokenService auth("unit_test_secret", 10);
+    ddz::ReconnectService reconnect_service(session_manager, auth, player_manager, room_manager);
 
     // 1) invalid token
     {
@@ -20,7 +21,8 @@ int main() {
 
     // 2) no session
     {
-        const auto r = reconnect_service.HandleReconnect(2002, "token=9999", 1001);
+        const auto t = auth.Issue(9999, 1000);
+        const auto r = reconnect_service.HandleReconnect(2002, "token=" + t.token, 1001);
         assert(r.code == ddz::ErrorCode::NOT_LOGIN);
     }
 
@@ -34,7 +36,8 @@ int main() {
         session_manager.MarkOfflineByConnection(3001, 1003);
         player_manager.ForceState(1001, ddz::PlayerState::Offline);
 
-        const auto r = reconnect_service.HandleReconnect(3002, "token=1001", 1004);
+        const auto token = auth.Issue(1001, 1000).token;
+        const auto r = reconnect_service.HandleReconnect(3002, "token=" + token, 1004);
         assert(r.code == ddz::ErrorCode::OK);
         assert(r.player_id == 1001);
         assert(r.room_id == room_id);
@@ -52,7 +55,8 @@ int main() {
         player_manager.ForceState(2001, ddz::PlayerState::Lobby);
         session_manager.BindLogin(2001, 4001, 1010);
 
-        const auto r = reconnect_service.HandleReconnect(4002, "token=2001", 1011);
+        const auto token = auth.Issue(2001, 1000).token;
+        const auto r = reconnect_service.HandleReconnect(4002, "token=" + token, 1011);
         assert(r.code == ddz::ErrorCode::OK);
         assert(r.old_connection_to_kick.has_value());
         assert(r.old_connection_to_kick.value() == 4001);
@@ -60,7 +64,13 @@ int main() {
         assert(player_manager.GetState(2001) == ddz::PlayerState::Lobby);
     }
 
+    // 5) expired token
+    {
+        const auto token = auth.Issue(2001, 1000).token;
+        const auto r = reconnect_service.HandleReconnect(5001, "token=" + token, 12001);
+        assert(r.code == ddz::ErrorCode::TOKEN_EXPIRED);
+    }
+
     std::cout << "test_p3_reconnect_service passed" << std::endl;
     return 0;
 }
-

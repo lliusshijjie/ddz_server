@@ -11,6 +11,7 @@ struct ServerConfig {
     int io_threads = 2;
     uint32_t max_packet_size = 65536;
     int64_t heartbeat_timeout_ms = 30000;
+    int64_t match_timeout_ms = 30000;
 };
 
 struct LogConfig {
@@ -36,11 +37,17 @@ struct RedisConfig {
     std::string password;
 };
 
+struct AuthConfig {
+    std::string token_secret = "dev_change_me";
+    int64_t token_ttl_seconds = 604800;
+};
+
 struct AppConfig {
     ServerConfig server;
     LogConfig log;
     MysqlConfig mysql;
     RedisConfig redis;
+    AuthConfig auth;
 };
 
 class ConfigLoader {

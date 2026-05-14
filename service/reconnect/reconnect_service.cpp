@@ -6,13 +6,23 @@ namespace ddz {
 
 ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const std::string& request_body, int64_t now_ms) {
     ReconnectResult result;
-    const auto player_id_opt = ParsePlayerIdFromTokenBody(request_body);
-    if (!player_id_opt.has_value()) {
+    const auto token = ParseTokenFromBody(request_body);
+    if (!token.has_value()) {
         result.code = ErrorCode::INVALID_TOKEN;
         return result;
     }
 
-    const int64_t player_id = player_id_opt.value();
+    const auto verify = auth_token_service_.Verify(token.value(), now_ms);
+    if (verify.expired) {
+        result.code = ErrorCode::TOKEN_EXPIRED;
+        return result;
+    }
+    if (!verify.ok) {
+        result.code = ErrorCode::INVALID_TOKEN;
+        return result;
+    }
+
+    const int64_t player_id = verify.player_id;
     const auto session = session_manager_.GetSessionByPlayer(player_id);
     if (!session.has_value()) {
         result.code = ErrorCode::NOT_LOGIN;
@@ -33,23 +43,13 @@ ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const s
     return result;
 }
 
-std::optional<int64_t> ReconnectService::ParsePlayerIdFromTokenBody(const std::string& request_body) {
+std::optional<std::string> ReconnectService::ParseTokenFromBody(const std::string& request_body) {
     const auto kv = ParseKvBody(request_body);
     const auto token_it = kv.find("token");
     if (token_it == kv.end() || token_it->second.empty()) {
         return std::nullopt;
     }
-    try {
-        size_t idx = 0;
-        const int64_t id = std::stoll(token_it->second, &idx);
-        if (idx != token_it->second.size() || id <= 0) {
-            return std::nullopt;
-        }
-        return id;
-    } catch (...) {
-        return std::nullopt;
-    }
+    return token_it->second;
 }
 
 }  // namespace ddz
-

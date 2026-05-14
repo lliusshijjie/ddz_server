@@ -38,6 +38,8 @@ int main() {
     assert(pm.GetState(1001) == ddz::PlayerState::InRoom);
     assert(sm.GetSessionByPlayer(1001)->room_id == r3.room_id);
     assert(rm.GetRoomById(r3.room_id).has_value());
+    auto in_room_match = ms.HandleMatch(2001, "mode=3", 104);
+    assert(in_room_match.code == ddz::ErrorCode::PLAYER_ALREADY_IN_ROOM);
 
     auto bad = ms.HandleMatch(2004, "mode=9", 104);
     assert(bad.code == ddz::ErrorCode::MATCH_MODE_INVALID);
@@ -46,6 +48,20 @@ int main() {
     assert(q.code == ddz::ErrorCode::OK);
     assert(!q.matched);
     assert(pm.GetState(1004) == ddz::PlayerState::Matching);
+
+    auto timeout_events = ms.HandleMatchTimeout(106 + 30001, 30000);
+    assert(timeout_events.size() == 1);
+    assert(timeout_events[0].player_id == 1004);
+    assert(timeout_events[0].mode == 4);
+    assert(pm.GetState(1004) == ddz::PlayerState::Lobby);
+
+    auto cancel_after_timeout = ms.HandleCancelMatch(2004);
+    assert(cancel_after_timeout.code == ddz::ErrorCode::INVALID_PLAYER_STATE);
+
+    auto q2 = ms.HandleMatch(2004, "mode=4", 200);
+    assert(q2.code == ddz::ErrorCode::OK);
+    assert(!q2.matched);
+    assert(pm.GetState(1004) == ddz::PlayerState::Matching);
     auto cancel = ms.HandleCancelMatch(2004);
     assert(cancel.code == ddz::ErrorCode::OK);
     assert(pm.GetState(1004) == ddz::PlayerState::Lobby);
@@ -53,4 +69,3 @@ int main() {
     std::cout << "test_p2_match_service passed" << std::endl;
     return 0;
 }
-
