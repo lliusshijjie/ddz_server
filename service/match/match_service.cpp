@@ -110,7 +110,7 @@ std::optional<int32_t> MatchService::ParseMode(const std::string& request_body) 
     }
     try {
         const int mode = std::stoi(it->second);
-        if (mode == 3 || mode == 4) {
+        if (mode == 3) {
             return mode;
         }
         return std::nullopt;

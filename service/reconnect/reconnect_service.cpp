@@ -58,7 +58,8 @@ ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const s
         return result;
     }
 
-    const auto verify = auth_token_service_.Verify(parsed->token, now_ms);
+    const auto verify = auth_token_service_.Verify(
+        parsed->token, now_ms, AuthTokenService::kPurposeSession);
     if (verify.expired) {
         result.code = ErrorCode::TOKEN_EXPIRED;
         return result;

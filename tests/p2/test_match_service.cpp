@@ -45,26 +45,14 @@ int main() {
     assert(bad.code == ddz::ErrorCode::MATCH_MODE_INVALID);
 
     auto q = ms.HandleMatch(2004, "mode=4", 105);
-    assert(q.code == ddz::ErrorCode::OK);
-    assert(!q.matched);
-    assert(pm.GetState(1004) == ddz::PlayerState::Matching);
+    assert(q.code == ddz::ErrorCode::MATCH_MODE_INVALID);
+    assert(pm.GetState(1004) == ddz::PlayerState::Lobby);
 
     auto timeout_events = ms.HandleMatchTimeout(106 + 30001, 30000);
-    assert(timeout_events.size() == 1);
-    assert(timeout_events[0].player_id == 1004);
-    assert(timeout_events[0].mode == 4);
-    assert(pm.GetState(1004) == ddz::PlayerState::Lobby);
+    assert(timeout_events.empty());
 
     auto cancel_after_timeout = ms.HandleCancelMatch(2004);
     assert(cancel_after_timeout.code == ddz::ErrorCode::INVALID_PLAYER_STATE);
-
-    auto q2 = ms.HandleMatch(2004, "mode=4", 200);
-    assert(q2.code == ddz::ErrorCode::OK);
-    assert(!q2.matched);
-    assert(pm.GetState(1004) == ddz::PlayerState::Matching);
-    auto cancel = ms.HandleCancelMatch(2004);
-    assert(cancel.code == ddz::ErrorCode::OK);
-    assert(pm.GetState(1004) == ddz::PlayerState::Lobby);
 
     std::cout << "test_p2_match_service passed" << std::endl;
     return 0;

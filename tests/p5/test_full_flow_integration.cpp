@@ -29,7 +29,8 @@ int main() {
     for (int i = 1; i <= 4; ++i) {
         const int64_t player_id = 1000 + i;
         const int64_t conn_id = 2000 + i;
-        const auto r = login_service.HandleLogin(conn_id, "player_id=" + std::to_string(player_id), 100 + i);
+        const auto ticket = auth.IssueLoginTicket(player_id, 99 + i);
+        const auto r = login_service.HandleLogin(conn_id, "login_ticket=" + ticket.token, 100 + i);
         assert(r.code == ddz::ErrorCode::OK);
         assert(r.player_id == player_id);
         assert(!r.token.empty());

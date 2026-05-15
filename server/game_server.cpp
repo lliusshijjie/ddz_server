@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <optional>
 #include <sstream>
 
 #include "common/util/kv_codec.h"
@@ -196,6 +197,10 @@ void GameServer::Stop() {
 void GameServer::RegisterHandlers() {
     dispatcher_.Register(MSG_LOGIN_REQ, [this](const Packet& request, Packet& response, int64_t connection_id) {
         const LoginResult r = login_service_.HandleLogin(connection_id, request.body, NowMs());
+        std::optional<RoomSnapshot> snapshot;
+        if (r.code == ErrorCode::OK && r.reconnect_mode && r.room_id > 0) {
+            snapshot = room_manager_.BuildSnapshotByRoomId(r.room_id);
+        }
         response.msg_id = MSG_LOGIN_RESP;
         response.seq_id = request.seq_id;
         response.player_id = r.player_id;
@@ -204,6 +209,9 @@ void GameServer::RegisterHandlers() {
             {"player_id", std::to_string(r.player_id)},
             {"nickname", r.nickname},
             {"coin", std::to_string(r.coin)},
+            {"room_id", std::to_string(r.room_id)},
+            {"reconnect_mode", r.reconnect_mode ? "1" : "0"},
+            {"snapshot_version", std::to_string(snapshot.has_value() ? snapshot->snapshot_version : 0)},
             {"token", r.token},
             {"expire_at_ms", std::to_string(r.expire_at_ms)}
         });
@@ -211,6 +219,11 @@ void GameServer::RegisterHandlers() {
             r.old_connection_to_kick.value() != connection_id &&
             tcp_server_ != nullptr) {
             tcp_server_->CloseConnection(r.old_connection_to_kick.value());
+        }
+        if (r.code == ErrorCode::OK && r.reconnect_mode && snapshot.has_value()) {
+            room_manager_.MarkPlayerOnline(r.player_id);
+            NotifyRoomSnapshot(r.player_id, connection_id, snapshot.value());
+            NotifyPlayerReconnectInRoom(r.room_id, r.player_id);
         }
         return true;
     });

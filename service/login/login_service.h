@@ -37,6 +37,8 @@ struct LoginResult {
     int64_t player_id = 0;
     std::string nickname;
     int64_t coin = 0;
+    int64_t room_id = 0;
+    bool reconnect_mode = false;
     std::string token;
     int64_t expire_at_ms = 0;
     std::optional<int64_t> old_connection_to_kick;
@@ -56,7 +58,7 @@ public:
     LoginResult HandleLogin(int64_t connection_id, const std::string& request_body, int64_t now_ms);
 
 private:
-    static std::optional<int64_t> ParsePlayerId(const std::string& request_body);
+    static std::optional<std::string> ParseLoginTicket(const std::string& request_body);
 
 private:
     SessionManager& session_manager_;

@@ -8,6 +8,7 @@
 - P4：规则引擎（牌型识别/比较）、动作语义校验、服务端自动触发结算
 - P6：MySQL DAO 与结算事务、Redis token/session/online 接入
 - P5（本次）：可观测埋点、压测脚本、CI 门禁、故障演练测试
+- P0 安全收敛：登录改为 `login_ticket` 验签；房间内重复登录按“登录即重连”处理；当前关闭四人场（仅支持 `mode=3`）
 
 ## 环境要求
 
@@ -67,19 +68,38 @@ ctest -C Debug --test-dir build -R p5_fault_drills --output-on-failure
 
 关键 P3 消息：
 
+- `1001` `MSG_LOGIN_REQ`
+- `1002` `MSG_LOGIN_RESP`
 - `3001` `MSG_ROOM_SNAPSHOT_NOTIFY`
 - `3003` `MSG_PLAYER_RECONNECT_NOTIFY`
 - `6001` `MSG_RECONNECT_REQ`
 - `6002` `MSG_RECONNECT_RESP`
 
+`MSG_LOGIN_REQ` 当前字段：
+
+- `login_ticket`（必填，服务端验签与过期校验）
+- `nickname`（可选）
+
+`MSG_LOGIN_RESP` 关键字段：
+
+- `code/player_id/nickname/coin/token/expire_at_ms`
+- `room_id/reconnect_mode/snapshot_version`
+
+说明：`token` 为会话 token（`session` purpose），用于后续心跳/重连校验。
+
 `MSG_RECONNECT_REQ` 当前字段：
 
 - `player_id`
-- `token`
+- `token`（会话 token）
 - `room_id`
 - `last_snapshot_version`
 
 当客户端版本落后或冲突时，服务端返回 `SNAPSHOT_VERSION_CONFLICT` 并附最新快照，客户端可直接覆盖本地态。
+
+匹配模式说明：
+
+- 当前仅支持 `mode=3`（三人场）
+- `mode=4` 请求会返回 `MATCH_MODE_INVALID`
 
 ## P3 离线策略
 
