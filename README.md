@@ -98,4 +98,4 @@ perf:
   soft_threshold_enabled: true
 ```
 
-CI：`.github/workflows/ci.yml`（Ubuntu + Windows，build + ctest + perf soft gate）。
+CI：`.github/workflows/ci.yml`（Ubuntu + Windows + macOS，build + ctest + perf soft gate；Docker 容器仅在 Linux runner 上启动）。
