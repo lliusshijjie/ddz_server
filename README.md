@@ -98,7 +98,7 @@ flowchart TB
     Accept[Accept Thread<br/>accept新连接]
     Timer[Timer Thread<br/>1s Tick: 心跳超时/匹配超时/托管/离线判负]
 
-    subgraph IO[IO Worker Pool (size = server.io_threads)]
+    subgraph IO["IO Worker Pool - size: server.io_threads"]
         W1[Worker #1]
         W2[Worker #2]
         WN[Worker #N]
