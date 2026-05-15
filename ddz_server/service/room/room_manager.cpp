@@ -106,6 +106,24 @@ RoomSnapshot MakeSnapshot(const Room& room) {
     return snapshot;
 }
 
+RoomPushSnapshotV2 MakePushSnapshotV2(const Room& room) {
+    RoomPushSnapshotV2 v2;
+    v2.base = MakeSnapshot(room);
+    v2.last_play_player_id = room.last_play_player_id;
+    v2.last_play_cards = room.last_play_cards;
+    v2.action_deadline_ms = v2.base.nearest_offline_deadline_ms;
+    if (room.state == RoomState::Playing || room.state == RoomState::Settling || room.state == RoomState::Finished) {
+        v2.landlord_bottom_cards = room.landlord_bottom_cards;
+    }
+    v2.player_card_counts.reserve(room.players.size());
+    for (const auto player_id : room.players) {
+        auto it = room.hands.find(player_id);
+        const int32_t card_count = (it == room.hands.end()) ? 0 : static_cast<int32_t>(it->second.size());
+        v2.player_card_counts.push_back({player_id, card_count});
+    }
+    return v2;
+}
+
 void BumpSnapshotVersion(Room* room, bool count_as_action) {
     if (room == nullptr) {
         return;
@@ -231,6 +249,28 @@ std::optional<RoomSnapshot> RoomManager::BuildSnapshotByPlayerId(int64_t player_
         return std::nullopt;
     }
     return MakeSnapshot(rit->second);
+}
+
+std::optional<RoomPushSnapshotV2> RoomManager::BuildPushSnapshotV2ByRoomId(int64_t room_id) const {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto it = rooms_.find(room_id);
+    if (it == rooms_.end()) {
+        return std::nullopt;
+    }
+    return MakePushSnapshotV2(it->second);
+}
+
+std::optional<RoomPushSnapshotV2> RoomManager::BuildPushSnapshotV2ByPlayerId(int64_t player_id) const {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto pit = player_to_room_.find(player_id);
+    if (pit == player_to_room_.end()) {
+        return std::nullopt;
+    }
+    auto rit = rooms_.find(pit->second);
+    if (rit == rooms_.end()) {
+        return std::nullopt;
+    }
+    return MakePushSnapshotV2(rit->second);
 }
 
 std::optional<PlayerActionResult> RoomManager::ApplyPlayerAction(int64_t room_id,

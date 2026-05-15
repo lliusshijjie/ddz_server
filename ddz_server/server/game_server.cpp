@@ -44,6 +44,31 @@ std::vector<int32_t> ParseCardList(const std::string& text, bool* ok) {
     return out;
 }
 
+template <typename T>
+std::string JoinNumberList(const std::vector<T>& values) {
+    std::string out;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            out.push_back(',');
+        }
+        out += std::to_string(values[i]);
+    }
+    return out;
+}
+
+std::string BuildCardCountList(const std::vector<std::pair<int64_t, int32_t>>& card_counts) {
+    std::string out;
+    for (size_t i = 0; i < card_counts.size(); ++i) {
+        if (i > 0) {
+            out.push_back(',');
+        }
+        out += std::to_string(card_counts[i].first);
+        out.push_back(':');
+        out += std::to_string(card_counts[i].second);
+    }
+    return out;
+}
+
 std::string GenerateTraceId(int64_t connection_id, uint32_t seq_id) {
     return std::to_string(NowMs()) + "-" +
            std::to_string(connection_id) + "-" +
@@ -231,6 +256,10 @@ void GameServer::RegisterHandlers() {
         if (r.code == ErrorCode::OK && r.reconnect_mode && snapshot.has_value()) {
             room_manager_.MarkPlayerOnline(r.player_id);
             NotifyRoomSnapshot(r.player_id, connection_id, snapshot.value());
+            NotifyPrivateHandByConnection(r.player_id, connection_id, r.room_id, snapshot->snapshot_version);
+            if (const auto push_v2 = room_manager_.BuildPushSnapshotV2ByRoomId(r.room_id); push_v2.has_value()) {
+                NotifyRoomStatePushV2(r.room_id, push_v2.value());
+            }
             NotifyPlayerReconnectInRoom(r.room_id, r.player_id);
         }
         return true;
@@ -301,6 +330,10 @@ void GameServer::RegisterHandlers() {
         if ((r.code == ErrorCode::OK || r.code == ErrorCode::SNAPSHOT_VERSION_CONFLICT) && r.snapshot.has_value()) {
             room_manager_.MarkPlayerOnline(r.player_id);
             NotifyRoomSnapshot(r.player_id, connection_id, r.snapshot.value());
+            NotifyPrivateHandByConnection(r.player_id, connection_id, r.snapshot->room_id, r.snapshot->snapshot_version);
+            if (const auto push_v2 = room_manager_.BuildPushSnapshotV2ByRoomId(r.snapshot->room_id); push_v2.has_value()) {
+                NotifyRoomStatePushV2(r.snapshot->room_id, push_v2.value());
+            }
             NotifyPlayerReconnectInRoom(r.snapshot->room_id, r.player_id);
         }
         return true;
@@ -393,6 +426,10 @@ void GameServer::RegisterHandlers() {
         ErrorCode action_code = ErrorCode::OK;
         int64_t settlement_record_id = 0;
         NotifyRoomStatePush(room_id, snapshot);
+        if (const auto push_v2 = room_manager_.BuildPushSnapshotV2ByRoomId(room_id); push_v2.has_value()) {
+            NotifyRoomStatePushV2(room_id, push_v2.value());
+        }
+        NotifyPrivateHandsInRoom(room_id, snapshot.snapshot_version);
 
         if (action_result->game_over) {
             const int64_t settle_begin = NowMs();
@@ -471,6 +508,10 @@ void GameServer::TimerLoop() {
                     const auto auto_action = room_manager_.ApplyTrusteeAction(session.room_id, session.player_id, &trustee_err);
                     if (auto_action.has_value()) {
                         NotifyRoomStatePush(session.room_id, auto_action->snapshot);
+                        if (const auto push_v2 = room_manager_.BuildPushSnapshotV2ByRoomId(session.room_id); push_v2.has_value()) {
+                            NotifyRoomStatePushV2(session.room_id, push_v2.value());
+                        }
+                        NotifyPrivateHandsInRoom(session.room_id, auto_action->snapshot.snapshot_version);
                         if (auto_action->game_over) {
                             const int64_t settle_begin = NowMs();
                             const SettlementResult settle_result = settlement_service_.SettleByServerResult(
@@ -648,13 +689,7 @@ void GameServer::NotifyRoomSnapshot(int64_t player_id, int64_t connection_id, co
     if (tcp_server_ == nullptr) {
         return;
     }
-    std::string players_joined;
-    for (size_t i = 0; i < snapshot.players.size(); ++i) {
-        if (i > 0) {
-            players_joined.push_back(',');
-        }
-        players_joined += std::to_string(snapshot.players[i]);
-    }
+    const std::string players_joined = JoinNumberList(snapshot.players);
 
     Packet notify;
     notify.msg_id = MSG_ROOM_SNAPSHOT_NOTIFY;
@@ -676,6 +711,46 @@ void GameServer::NotifyRoomSnapshot(int64_t player_id, int64_t connection_id, co
         {"nearest_offline_deadline_ms", std::to_string(snapshot.nearest_offline_deadline_ms)}
     });
     tcp_server_->SendPacket(connection_id, notify);
+}
+
+void GameServer::NotifyPrivateHandByConnection(
+    int64_t player_id, int64_t connection_id, int64_t room_id, int64_t snapshot_version) {
+    if (tcp_server_ == nullptr || room_id <= 0) {
+        return;
+    }
+    const auto hand_opt = room_manager_.GetPlayerHand(room_id, player_id);
+    if (!hand_opt.has_value()) {
+        return;
+    }
+    Packet notify;
+    notify.msg_id = MSG_PRIVATE_HAND_NOTIFY;
+    notify.seq_id = 0;
+    notify.player_id = player_id;
+    notify.body = BuildKvBody({
+        {"room_id", std::to_string(room_id)},
+        {"player_id", std::to_string(player_id)},
+        {"cards", JoinNumberList(hand_opt.value())},
+        {"card_count", std::to_string(static_cast<int32_t>(hand_opt->size()))},
+        {"snapshot_version", std::to_string(snapshot_version)}
+    });
+    tcp_server_->SendPacket(connection_id, notify);
+}
+
+void GameServer::NotifyPrivateHandsInRoom(int64_t room_id, int64_t snapshot_version) {
+    if (tcp_server_ == nullptr || room_id <= 0) {
+        return;
+    }
+    const auto room = room_manager_.GetRoomById(room_id);
+    if (!room.has_value() || !room->dealt) {
+        return;
+    }
+    for (const auto player_id : room->players) {
+        const auto conn_id = session_manager_.GetConnectionIdByPlayer(player_id);
+        if (!conn_id.has_value()) {
+            continue;
+        }
+        NotifyPrivateHandByConnection(player_id, conn_id.value(), room_id, snapshot_version);
+    }
 }
 
 void GameServer::NotifyPlayerReconnectInRoom(int64_t room_id, int64_t reconnect_player_id) {
@@ -714,13 +789,7 @@ void GameServer::NotifyRoomStatePush(int64_t room_id, const RoomSnapshot& snapsh
     if (!room.has_value()) {
         return;
     }
-    std::string players_joined;
-    for (size_t i = 0; i < snapshot.players.size(); ++i) {
-        if (i > 0) {
-            players_joined.push_back(',');
-        }
-        players_joined += std::to_string(snapshot.players[i]);
-    }
+    const std::string players_joined = JoinNumberList(snapshot.players);
     for (const auto player_id : room->players) {
         const auto conn_id = session_manager_.GetConnectionIdByPlayer(player_id);
         if (!conn_id.has_value()) {
@@ -742,6 +811,50 @@ void GameServer::NotifyRoomStatePush(int64_t room_id, const RoomSnapshot& snapsh
             {"players_online_bitmap", snapshot.players_online_bitmap},
             {"trustee_players", snapshot.trustee_players},
             {"nearest_offline_deadline_ms", std::to_string(snapshot.nearest_offline_deadline_ms)}
+        });
+        tcp_server_->SendPacket(conn_id.value(), notify);
+    }
+}
+
+void GameServer::NotifyRoomStatePushV2(int64_t room_id, const RoomPushSnapshotV2& snapshot) {
+    if (tcp_server_ == nullptr) {
+        return;
+    }
+    const auto room = room_manager_.GetRoomById(room_id);
+    if (!room.has_value()) {
+        return;
+    }
+    const std::string players_joined = JoinNumberList(snapshot.base.players);
+    const std::string last_play_cards = JoinNumberList(snapshot.last_play_cards);
+    const std::string landlord_bottom_cards = JoinNumberList(snapshot.landlord_bottom_cards);
+    const std::string player_card_counts = BuildCardCountList(snapshot.player_card_counts);
+
+    for (const auto player_id : room->players) {
+        const auto conn_id = session_manager_.GetConnectionIdByPlayer(player_id);
+        if (!conn_id.has_value()) {
+            continue;
+        }
+        Packet notify;
+        notify.msg_id = MSG_ROOM_STATE_PUSH_V2;
+        notify.seq_id = 0;
+        notify.player_id = player_id;
+        notify.body = BuildKvBody({
+            {"room_id", std::to_string(snapshot.base.room_id)},
+            {"room_state", std::to_string(snapshot.base.room_state)},
+            {"players", players_joined},
+            {"current_operator_player_id", std::to_string(snapshot.base.current_operator_player_id)},
+            {"landlord_player_id", std::to_string(snapshot.base.landlord_player_id)},
+            {"base_coin", std::to_string(snapshot.base.base_coin)},
+            {"snapshot_version", std::to_string(snapshot.base.snapshot_version)},
+            {"last_action_seq", std::to_string(snapshot.base.last_action_seq)},
+            {"players_online_bitmap", snapshot.base.players_online_bitmap},
+            {"trustee_players", snapshot.base.trustee_players},
+            {"nearest_offline_deadline_ms", std::to_string(snapshot.base.nearest_offline_deadline_ms)},
+            {"last_play_player_id", std::to_string(snapshot.last_play_player_id)},
+            {"last_play_cards", last_play_cards},
+            {"player_card_counts", player_card_counts},
+            {"landlord_bottom_cards", landlord_bottom_cards},
+            {"action_deadline_ms", std::to_string(snapshot.action_deadline_ms)}
         });
         tcp_server_->SendPacket(conn_id.value(), notify);
     }

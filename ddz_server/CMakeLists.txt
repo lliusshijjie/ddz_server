@@ -44,6 +44,35 @@ add_executable(ddz_server
 )
 target_link_libraries(ddz_server PRIVATE ddz_core)
 
+option(DDZ_BUILD_GATEWAY "Build ddz_gateway target" ON)
+if (DDZ_BUILD_GATEWAY)
+    set(DDZ_BOOST_ROOT_HINT "D:/Boost/boost_1_88_0")
+    set(DDZ_GATEWAY_BOOST_INCLUDE "")
+    if (DEFINED ENV{BOOST_ROOT} AND EXISTS "$ENV{BOOST_ROOT}/boost/version.hpp")
+        set(DDZ_GATEWAY_BOOST_INCLUDE "$ENV{BOOST_ROOT}")
+    elseif (EXISTS "${DDZ_BOOST_ROOT_HINT}/boost/version.hpp")
+        set(DDZ_GATEWAY_BOOST_INCLUDE "${DDZ_BOOST_ROOT_HINT}")
+    endif()
+
+    if (NOT DDZ_GATEWAY_BOOST_INCLUDE)
+        message(WARNING "Boost headers not found. Set BOOST_ROOT or install Boost under D:/Boost/boost_1_88_0 to build ddz_gateway.")
+    else()
+        add_executable(ddz_gateway
+            gateway/main.cpp
+            gateway/gateway_server.cpp
+            gateway/gateway_config.cpp
+            gateway/json_codec.cpp
+            gateway/upstream_tcp_client.cpp
+        )
+        target_include_directories(ddz_gateway PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${DDZ_GATEWAY_BOOST_INCLUDE}
+        )
+        target_compile_definitions(ddz_gateway PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
+        target_link_libraries(ddz_gateway PRIVATE ddz_core)
+    endif()
+endif()
+
 enable_testing()
 
 add_executable(test_p0_packet_codec
@@ -117,6 +146,12 @@ add_executable(test_p3_room_snapshot
 )
 target_link_libraries(test_p3_room_snapshot PRIVATE ddz_core)
 add_test(NAME p3_room_snapshot COMMAND test_p3_room_snapshot)
+
+add_executable(test_p3_room_push_v2_snapshot
+    tests/p3/test_room_push_v2_snapshot.cpp
+)
+target_link_libraries(test_p3_room_push_v2_snapshot PRIVATE ddz_core)
+add_test(NAME p3_room_push_v2_snapshot COMMAND test_p3_room_push_v2_snapshot)
 
 add_executable(test_p3_offline_trustee_policy
     tests/p3/test_offline_trustee_policy.cpp

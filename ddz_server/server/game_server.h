@@ -36,11 +36,13 @@ public:
     static constexpr uint32_t MSG_MATCH_SUCCESS_NOTIFY = 2005;
     static constexpr uint32_t MSG_MATCH_TIMEOUT_NOTIFY = 2006;
     static constexpr uint32_t MSG_ROOM_SNAPSHOT_NOTIFY = 3001;
+    static constexpr uint32_t MSG_PRIVATE_HAND_NOTIFY = 3002;
     static constexpr uint32_t MSG_PLAYER_RECONNECT_NOTIFY = 3003;
     static constexpr uint32_t MSG_PLAYER_ACTION_REQ = 4001;
     static constexpr uint32_t MSG_PLAYER_ACTION_RESP = 4002;
     static constexpr uint32_t MSG_ROOM_STATE_PUSH = 4003;
     static constexpr uint32_t MSG_GAME_RESULT_PUSH = 4004;
+    static constexpr uint32_t MSG_ROOM_STATE_PUSH_V2 = 4005;
     static constexpr uint32_t MSG_GAME_OVER_NOTIFY = 5001;
     static constexpr uint32_t MSG_SETTLEMENT_REQ = 5002;
     static constexpr uint32_t MSG_SETTLEMENT_RESP = 5003;
@@ -61,8 +63,11 @@ private:
     void NotifyMatchSuccess(int64_t room_id, int32_t mode, const std::vector<int64_t>& players);
     void NotifyMatchTimeout(const std::vector<MatchTimeoutEvent>& timeout_players);
     void NotifyRoomSnapshot(int64_t player_id, int64_t connection_id, const RoomSnapshot& snapshot);
+    void NotifyPrivateHandByConnection(int64_t player_id, int64_t connection_id, int64_t room_id, int64_t snapshot_version);
+    void NotifyPrivateHandsInRoom(int64_t room_id, int64_t snapshot_version);
     void NotifyPlayerReconnectInRoom(int64_t room_id, int64_t reconnect_player_id);
     void NotifyRoomStatePush(int64_t room_id, const RoomSnapshot& snapshot);
+    void NotifyRoomStatePushV2(int64_t room_id, const RoomPushSnapshotV2& snapshot);
     void NotifyGameOver(const SettlementResult& result);
 
 private:

@@ -21,6 +21,8 @@ public:
     std::optional<int64_t> GetRoomIdByPlayer(int64_t player_id) const;
     std::optional<RoomSnapshot> BuildSnapshotByRoomId(int64_t room_id) const;
     std::optional<RoomSnapshot> BuildSnapshotByPlayerId(int64_t player_id) const;
+    std::optional<RoomPushSnapshotV2> BuildPushSnapshotV2ByRoomId(int64_t room_id) const;
+    std::optional<RoomPushSnapshotV2> BuildPushSnapshotV2ByPlayerId(int64_t player_id) const;
     std::optional<RoomSnapshot> ApplyPlayerAction(int64_t room_id,
                                                   int64_t player_id,
                                                   PlayerActionType action_type,

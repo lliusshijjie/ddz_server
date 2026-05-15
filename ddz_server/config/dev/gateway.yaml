@@ -1,0 +1,15 @@
+gateway:
+  listen_host: 0.0.0.0
+  listen_port: 9010
+  upstream_host: 127.0.0.1
+  upstream_port: 9000
+  max_packet_size: 65536
+  dev_key: "dev_gateway_key"
+
+auth:
+  token_secret: "dev_change_me"
+  token_ttl_seconds: 604800
+
+log:
+  level: info
+  dir: ./logs

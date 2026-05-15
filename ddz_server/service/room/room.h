@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace ddz {
@@ -54,6 +55,15 @@ struct RoomSnapshot {
     std::string players_online_bitmap;
     std::string trustee_players;
     int64_t nearest_offline_deadline_ms = 0;
+};
+
+struct RoomPushSnapshotV2 {
+    RoomSnapshot base;
+    int64_t last_play_player_id = 0;
+    std::vector<int32_t> last_play_cards;
+    std::vector<int32_t> landlord_bottom_cards;
+    std::vector<std::pair<int64_t, int32_t>> player_card_counts;
+    int64_t action_deadline_ms = 0;
 };
 
 enum class PlayerActionType : int32_t {

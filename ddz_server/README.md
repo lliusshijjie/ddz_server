@@ -218,6 +218,42 @@ ctest -C Debug --test-dir build --output-on-failure
 build/Debug/ddz_server.exe config/dev/server.yaml
 ```
 
+### H5 网关（P7 第一轮）
+
+网关可执行：`ddz_gateway`（HTTP + WebSocket + 上游 TCP 转发）。
+
+- 默认配置文件：`config/dev/gateway.yaml`
+- 默认监听：`0.0.0.0:9010`
+- 默认上游：`127.0.0.1:9000`（`ddz_server`）
+
+构建网关（Windows 示例）：
+
+```bash
+cmake -S . -B build
+cmake --build build --config Debug --target ddz_gateway
+```
+
+> 说明：当前 CMake 会优先使用 `BOOST_ROOT`，若未设置则尝试 `D:/Boost/boost_1_88_0`。
+
+启动网关：
+
+```bash
+build/Debug/ddz_gateway.exe --config=config/dev/gateway.yaml
+```
+
+开发态票据签发接口：
+
+- `POST /api/auth/login-ticket`
+- Header: `X-Dev-Key: <gateway.dev_key>`
+- Body(JSON): `{"player_id":1001,"nickname":"alice"}`
+- Response(JSON): `code/player_id/login_ticket/expire_at_ms/message`
+
+WebSocket 接口：
+
+- `WS /ws/game`
+- 消息格式：JSON 信封，`body` 保持 KV 文本
+- 示例：`{"msg_id":1001,"seq_id":1,"player_id":0,"body":"login_ticket=...;nickname=alice"}`
+
 ## 网络模型说明（P2）
 
 - `server.io_threads` 已生效：采用“accept 线程 + 固定 IO worker”模型
@@ -260,6 +296,7 @@ ctest -C Debug --test-dir build -R p5_fault_drills --output-on-failure
 - `4002` `MSG_PLAYER_ACTION_RESP`
 - `4003` `MSG_ROOM_STATE_PUSH`
 - `4004` `MSG_GAME_RESULT_PUSH`
+- `4005` `MSG_ROOM_STATE_PUSH_V2`（P7 新增）
 - `5001` `MSG_GAME_OVER_NOTIFY`
 
 说明：`5002 MSG_SETTLEMENT_REQ` 已禁止客户端权威结算，服务端只接受内部自动结算链路。
@@ -274,9 +311,26 @@ ctest -C Debug --test-dir build -R p5_fault_drills --output-on-failure
 - `1001` `MSG_LOGIN_REQ`
 - `1002` `MSG_LOGIN_RESP`
 - `3001` `MSG_ROOM_SNAPSHOT_NOTIFY`
+- `3002` `MSG_PRIVATE_HAND_NOTIFY`（P7 新增）
 - `3003` `MSG_PLAYER_RECONNECT_NOTIFY`
 - `6001` `MSG_RECONNECT_REQ`
 - `6002` `MSG_RECONNECT_RESP`
+
+`MSG_PRIVATE_HAND_NOTIFY` 字段：
+
+- `room_id`
+- `player_id`
+- `cards`（逗号分隔）
+- `card_count`
+- `snapshot_version`
+
+`MSG_ROOM_STATE_PUSH_V2` 在 `4003` 基础上新增：
+
+- `last_play_player_id`
+- `last_play_cards`
+- `player_card_counts`（`pid:cnt,pid:cnt`）
+- `landlord_bottom_cards`
+- `action_deadline_ms`
 
 `MSG_LOGIN_REQ` 当前字段：
 
