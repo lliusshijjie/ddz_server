@@ -10,6 +10,24 @@ namespace {
 
 constexpr const char* kRedisContainer = "ddz_redis";
 
+#if defined(_WIN32)
+FILE* OpenPipe(const char* command, const char* mode) {
+    return _popen(command, mode);
+}
+
+int ClosePipe(FILE* pipe) {
+    return _pclose(pipe);
+}
+#else
+FILE* OpenPipe(const char* command, const char* mode) {
+    return popen(command, mode);
+}
+
+int ClosePipe(FILE* pipe) {
+    return pclose(pipe);
+}
+#endif
+
 std::string TrimRightNewline(std::string s) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
         s.pop_back();
@@ -227,7 +245,7 @@ bool RedisOptionalStore::RunRedisCli(const std::string& args, std::vector<std::s
     }
     std::ostringstream cmd;
     cmd << "docker exec " << kRedisContainer << " redis-cli " << args << " 2>&1";
-    FILE* pipe = _popen(cmd.str().c_str(), "r");
+    FILE* pipe = OpenPipe(cmd.str().c_str(), "r");
     if (pipe == nullptr) {
         if (err != nullptr) {
             *err = "failed to run redis-cli";
@@ -240,7 +258,7 @@ bool RedisOptionalStore::RunRedisCli(const std::string& args, std::vector<std::s
             out_lines->push_back(TrimRightNewline(buffer));
         }
     }
-    const int exit_code = _pclose(pipe);
+    const int exit_code = ClosePipe(pipe);
     if (exit_code != 0) {
         if (err != nullptr) {
             std::string details;
