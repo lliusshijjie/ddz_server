@@ -17,8 +17,18 @@ struct ReconnectResult {
     ErrorCode code = ErrorCode::UNKNOWN_ERROR;
     int64_t player_id = 0;
     int64_t room_id = 0;
+    std::string reason;
     std::optional<int64_t> old_connection_to_kick;
     std::optional<RoomSnapshot> snapshot;
+};
+
+struct SessionRefreshResult {
+    ErrorCode code = ErrorCode::UNKNOWN_ERROR;
+    int64_t player_id = 0;
+    int64_t room_id = 0;
+    std::string reason;
+    std::string token;
+    int64_t expire_at_ms = 0;
 };
 
 class ReconnectService {
@@ -35,6 +45,7 @@ public:
           redis_store_(redis_store) {}
 
     ReconnectResult HandleReconnect(int64_t connection_id, const std::string& request_body, int64_t now_ms);
+    SessionRefreshResult HandleSessionRefresh(const std::string& request_body, int64_t now_ms);
 
 private:
     static std::optional<std::string> ParseTokenFromBody(const std::string& request_body);

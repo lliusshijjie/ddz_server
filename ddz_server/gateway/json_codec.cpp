@@ -238,6 +238,24 @@ bool ParseEnvelopeJson(const std::string& text, GatewayEnvelope* out, std::strin
     out->seq_id = seq_id;
     out->player_id = player_id;
     out->body = it_body->second.value;
+    const auto it_h5 = fields.find("h5_request_id");
+    if (it_h5 != fields.end() && it_h5->second.is_string) {
+        out->h5_request_id = it_h5->second.value;
+    } else {
+        out->h5_request_id.clear();
+    }
+    const auto it_gateway = fields.find("gateway_trace_id");
+    if (it_gateway != fields.end() && it_gateway->second.is_string) {
+        out->gateway_trace_id = it_gateway->second.value;
+    } else {
+        out->gateway_trace_id.clear();
+    }
+    const auto it_server = fields.find("server_trace_id");
+    if (it_server != fields.end() && it_server->second.is_string) {
+        out->server_trace_id = it_server->second.value;
+    } else {
+        out->server_trace_id.clear();
+    }
     return true;
 }
 
@@ -247,7 +265,17 @@ std::string BuildEnvelopeJson(const GatewayEnvelope& envelope) {
         << "\"msg_id\":" << envelope.msg_id << ","
         << "\"seq_id\":" << envelope.seq_id << ","
         << "\"player_id\":" << envelope.player_id << ","
-        << "\"body\":\"" << EscapeJson(envelope.body) << "\""
+        << "\"body\":\"" << EscapeJson(envelope.body) << "\"";
+    if (!envelope.h5_request_id.empty()) {
+        oss << ",\"h5_request_id\":\"" << EscapeJson(envelope.h5_request_id) << "\"";
+    }
+    if (!envelope.gateway_trace_id.empty()) {
+        oss << ",\"gateway_trace_id\":\"" << EscapeJson(envelope.gateway_trace_id) << "\"";
+    }
+    if (!envelope.server_trace_id.empty()) {
+        oss << ",\"server_trace_id\":\"" << EscapeJson(envelope.server_trace_id) << "\"";
+    }
+    oss
         << "}";
     return oss.str();
 }
@@ -290,6 +318,33 @@ std::string BuildLoginTicketResponseJson(
         << "\"expire_at_ms\":" << expire_at_ms << ","
         << "\"message\":\"" << EscapeJson(message) << "\""
         << "}";
+    return oss.str();
+}
+
+std::string BuildSessionRefreshResponseJson(
+    int32_t code,
+    int64_t player_id,
+    int64_t room_id,
+    const std::string& token,
+    int64_t expire_at_ms,
+    const std::string& reason,
+    const std::string& gateway_trace_id,
+    const std::string& server_trace_id) {
+    std::ostringstream oss;
+    oss << "{"
+        << "\"code\":" << code << ","
+        << "\"player_id\":" << player_id << ","
+        << "\"room_id\":" << room_id << ","
+        << "\"token\":\"" << EscapeJson(token) << "\","
+        << "\"expire_at_ms\":" << expire_at_ms << ","
+        << "\"reason\":\"" << EscapeJson(reason) << "\"";
+    if (!gateway_trace_id.empty()) {
+        oss << ",\"gateway_trace_id\":\"" << EscapeJson(gateway_trace_id) << "\"";
+    }
+    if (!server_trace_id.empty()) {
+        oss << ",\"server_trace_id\":\"" << EscapeJson(server_trace_id) << "\"";
+    }
+    oss << "}";
     return oss.str();
 }
 

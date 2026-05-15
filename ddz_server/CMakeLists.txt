@@ -61,6 +61,7 @@ if (DDZ_BUILD_GATEWAY)
             gateway/main.cpp
             gateway/gateway_server.cpp
             gateway/gateway_config.cpp
+            gateway/gateway_observability_service.cpp
             gateway/json_codec.cpp
             gateway/upstream_tcp_client.cpp
         )
@@ -92,6 +93,13 @@ add_executable(test_p0_config_loader
 )
 target_link_libraries(test_p0_config_loader PRIVATE ddz_core)
 add_test(NAME p0_config_loader COMMAND test_p0_config_loader)
+
+add_executable(test_p0_gateway_config_loader
+    tests/p0/test_gateway_config_loader.cpp
+    gateway/gateway_config.cpp
+)
+target_link_libraries(test_p0_gateway_config_loader PRIVATE ddz_core)
+add_test(NAME p0_gateway_config_loader COMMAND test_p0_gateway_config_loader)
 
 add_executable(test_p1_session_manager
     tests/p1/test_session_manager.cpp

@@ -12,6 +12,12 @@ struct ParsedReconnectRequest {
     int64_t last_snapshot_version = 0;
 };
 
+struct ParsedSessionRefreshRequest {
+    int64_t player_id = 0;
+    std::string token;
+    int64_t room_id = 0;
+};
+
 bool ParseI64Strict(const std::string& text, int64_t* out) {
     try {
         size_t idx = 0;
@@ -48,13 +54,35 @@ std::optional<ParsedReconnectRequest> ParseReconnectRequest(const std::string& r
     return req;
 }
 
+std::optional<ParsedSessionRefreshRequest> ParseSessionRefreshRequest(const std::string& request_body) {
+    const auto kv = ParseKvBody(request_body);
+    auto it_player = kv.find("player_id");
+    auto it_token = kv.find("token");
+    auto it_room = kv.find("room_id");
+    if (it_player == kv.end() || it_token == kv.end() || it_room == kv.end()) {
+        return std::nullopt;
+    }
+    ParsedSessionRefreshRequest req;
+    if (it_token->second.empty()) {
+        return std::nullopt;
+    }
+    if (!ParseI64Strict(it_player->second, &req.player_id) ||
+        !ParseI64Strict(it_room->second, &req.room_id)) {
+        return std::nullopt;
+    }
+    req.token = it_token->second;
+    return req;
+}
+
 }  // namespace
 
 ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const std::string& request_body, int64_t now_ms) {
     ReconnectResult result;
+    result.reason = "unknown_error";
     const auto parsed = ParseReconnectRequest(request_body);
     if (!parsed.has_value()) {
         result.code = ErrorCode::INVALID_TOKEN;
+        result.reason = "invalid_packet";
         return result;
     }
 
@@ -62,30 +90,36 @@ ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const s
         parsed->token, now_ms, AuthTokenService::kPurposeSession);
     if (verify.expired) {
         result.code = ErrorCode::TOKEN_EXPIRED;
+        result.reason = "token_expired";
         return result;
     }
     if (!verify.ok) {
         result.code = ErrorCode::INVALID_TOKEN;
+        result.reason = "invalid_token";
         return result;
     }
 
     const int64_t player_id = verify.player_id;
     if (player_id != parsed->player_id) {
         result.code = ErrorCode::INVALID_TOKEN;
+        result.reason = "player_id_mismatch";
         return result;
     }
     if (redis_store_ != nullptr && redis_store_->enabled() && !redis_store_->ValidateToken(player_id, parsed->token)) {
         result.code = ErrorCode::INVALID_TOKEN;
+        result.reason = "token_not_found";
         return result;
     }
 
     const auto session = session_manager_.GetSessionByPlayer(player_id);
     if (!session.has_value()) {
         result.code = ErrorCode::NOT_LOGIN;
+        result.reason = "not_login";
         return result;
     }
     if (session->room_id != parsed->room_id) {
         result.code = ErrorCode::RECONNECT_ROOM_MISMATCH;
+        result.reason = "room_mismatch";
         return result;
     }
 
@@ -93,16 +127,19 @@ ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const s
     result.player_id = player_id;
     result.room_id = session->room_id;
     result.code = ErrorCode::OK;
+    result.reason = "ok";
 
     if (session->room_id > 0) {
         player_manager_.ForceState(player_id, PlayerState::InRoom);
         result.snapshot = room_manager_.BuildSnapshotByRoomId(session->room_id);
         if (result.snapshot.has_value() && result.snapshot->snapshot_version != parsed->last_snapshot_version) {
             result.code = ErrorCode::SNAPSHOT_VERSION_CONFLICT;
+            result.reason = "snapshot_version_conflict";
         }
     } else {
         player_manager_.ForceState(player_id, PlayerState::Lobby);
         result.code = (parsed->last_snapshot_version == 0) ? ErrorCode::OK : ErrorCode::SNAPSHOT_VERSION_CONFLICT;
+        result.reason = (result.code == ErrorCode::OK) ? "ok" : "snapshot_version_conflict";
     }
 
     if (redis_store_ != nullptr && redis_store_->enabled()) {
@@ -111,6 +148,84 @@ ReconnectResult ReconnectService::HandleReconnect(int64_t connection_id, const s
         if (!redis_store_->SetOnline(player_id, true, ttl_ms, &redis_err) ||
             !redis_store_->UpsertSession(player_id, result.room_id, ttl_ms, &redis_err)) {
             result.code = ErrorCode::UNKNOWN_ERROR;
+            result.reason = "redis_update_failed";
+        }
+    }
+
+    return result;
+}
+
+SessionRefreshResult ReconnectService::HandleSessionRefresh(const std::string& request_body, int64_t now_ms) {
+    SessionRefreshResult result;
+    result.reason = "unknown_error";
+    const auto parsed = ParseSessionRefreshRequest(request_body);
+    if (!parsed.has_value()) {
+        result.code = ErrorCode::INVALID_TOKEN;
+        result.reason = "invalid_packet";
+        return result;
+    }
+
+    const auto verify = auth_token_service_.Verify(parsed->token, now_ms, AuthTokenService::kPurposeSession);
+    if (verify.expired) {
+        result.code = ErrorCode::TOKEN_EXPIRED;
+        result.reason = "token_expired";
+        return result;
+    }
+    if (!verify.ok) {
+        result.code = ErrorCode::INVALID_TOKEN;
+        result.reason = "invalid_token";
+        return result;
+    }
+
+    const int64_t player_id = verify.player_id;
+    if (player_id != parsed->player_id) {
+        result.code = ErrorCode::INVALID_TOKEN;
+        result.reason = "player_id_mismatch";
+        return result;
+    }
+    if (redis_store_ != nullptr && redis_store_->enabled() && !redis_store_->ValidateToken(player_id, parsed->token)) {
+        result.code = ErrorCode::INVALID_TOKEN;
+        result.reason = "token_not_found";
+        return result;
+    }
+
+    const auto session = session_manager_.GetSessionByPlayer(player_id);
+    if (!session.has_value()) {
+        result.code = ErrorCode::NOT_LOGIN;
+        result.reason = "not_login";
+        return result;
+    }
+    if (session->room_id != parsed->room_id) {
+        result.code = ErrorCode::RECONNECT_ROOM_MISMATCH;
+        result.reason = "room_mismatch";
+        return result;
+    }
+
+    const auto new_token = auth_token_service_.IssueSessionToken(player_id, now_ms);
+    if (new_token.token.empty()) {
+        result.code = ErrorCode::UNKNOWN_ERROR;
+        result.reason = "issue_token_failed";
+        return result;
+    }
+
+    result.code = ErrorCode::OK;
+    result.reason = "ok";
+    result.player_id = player_id;
+    result.room_id = session->room_id;
+    result.token = new_token.token;
+    result.expire_at_ms = new_token.expire_at_ms;
+
+    if (redis_store_ != nullptr && redis_store_->enabled()) {
+        const int64_t ttl_ms = auth_token_service_.ttl_seconds() * 1000;
+        std::string redis_err;
+        if (!redis_store_->StoreToken(player_id, result.token, ttl_ms, &redis_err) ||
+            !redis_store_->SetOnline(player_id, true, ttl_ms, &redis_err) ||
+            !redis_store_->UpsertSession(player_id, result.room_id, ttl_ms, &redis_err)) {
+            result.code = ErrorCode::UNKNOWN_ERROR;
+            result.reason = "redis_update_failed";
+            result.token.clear();
+            result.expire_at_ms = 0;
+            return result;
         }
     }
 

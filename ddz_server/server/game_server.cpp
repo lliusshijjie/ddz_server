@@ -76,6 +76,11 @@ std::string GenerateTraceId(int64_t connection_id, uint32_t seq_id) {
            std::to_string(g_trace_seq.fetch_add(1));
 }
 
+struct GatewayTraceFields {
+    std::string h5_request_id;
+    std::string gateway_trace_id;
+};
+
 std::string EventNameByMsgId(uint32_t msg_id) {
     switch (msg_id) {
     case GameServer::MSG_LOGIN_REQ: return "login";
@@ -83,6 +88,7 @@ std::string EventNameByMsgId(uint32_t msg_id) {
     case GameServer::MSG_MATCH_REQ: return "match";
     case GameServer::MSG_CANCEL_MATCH_REQ: return "cancel_match";
     case GameServer::MSG_RECONNECT_REQ: return "reconnect";
+    case GameServer::MSG_SESSION_REFRESH_REQ: return "session_refresh";
     case GameServer::MSG_PLAYER_ACTION_REQ: return "player_action";
     case GameServer::MSG_SETTLEMENT_REQ: return "settlement_request";
     default: return "unknown";
@@ -100,6 +106,58 @@ ErrorCode ParseCodeFromResponseBody(const std::string& body) {
     } catch (...) {
         return ErrorCode::UNKNOWN_ERROR;
     }
+}
+
+GatewayTraceFields ParseGatewayTraceFields(const std::string& body) {
+    GatewayTraceFields fields;
+    const auto kv = ParseKvBody(body);
+    const auto it_h5 = kv.find("h5_request_id");
+    if (it_h5 != kv.end()) {
+        fields.h5_request_id = it_h5->second;
+    }
+    const auto it_gateway = kv.find("gateway_trace_id");
+    if (it_gateway != kv.end()) {
+        fields.gateway_trace_id = it_gateway->second;
+    }
+    return fields;
+}
+
+void AppendKvFieldIfMissing(std::string* body, const std::string& key, const std::string& value) {
+    if (body == nullptr || value.empty()) {
+        return;
+    }
+    const auto kv = ParseKvBody(*body);
+    if (kv.find(key) != kv.end()) {
+        return;
+    }
+    if (!body->empty()) {
+        body->push_back(';');
+    }
+    *body += key;
+    body->push_back('=');
+    *body += value;
+}
+
+std::string NormalizeActionReason(const std::string& action_err) {
+    if (action_err == "not player turn") {
+        return "not_your_turn";
+    }
+    if (action_err.find("action not allowed") != std::string::npos) {
+        return "action_not_allowed";
+    }
+    if (action_err == "invalid card combo") {
+        return "invalid_combo";
+    }
+    if (action_err == "combo cannot beat previous") {
+        return "cannot_beat_previous";
+    }
+    if (action_err == "cards not in hand") {
+        return "cards_not_in_hand";
+    }
+    if (action_err.find("invalid") != std::string::npos) {
+        return "invalid_packet";
+    }
+    return "action_failed";
 }
 
 }  // namespace
@@ -319,7 +377,8 @@ void GameServer::RegisterHandlers() {
             {"code", std::to_string(static_cast<int32_t>(r.code))},
             {"player_id", std::to_string(r.player_id)},
             {"room_id", std::to_string(r.room_id)},
-            {"snapshot_version", std::to_string(r.snapshot.has_value() ? r.snapshot->snapshot_version : 0)}
+            {"snapshot_version", std::to_string(r.snapshot.has_value() ? r.snapshot->snapshot_version : 0)},
+            {"reason", r.reason.empty() ? "unknown_error" : r.reason}
         });
 
         if (r.old_connection_to_kick.has_value() &&
@@ -339,6 +398,22 @@ void GameServer::RegisterHandlers() {
         return true;
     });
 
+    dispatcher_.Register(MSG_SESSION_REFRESH_REQ, [this](const Packet& request, Packet& response, int64_t /*connection_id*/) {
+        const SessionRefreshResult r = reconnect_service_.HandleSessionRefresh(request.body, NowMs());
+        response.msg_id = MSG_SESSION_REFRESH_RESP;
+        response.seq_id = request.seq_id;
+        response.player_id = r.player_id;
+        response.body = BuildKvBody({
+            {"code", std::to_string(static_cast<int32_t>(r.code))},
+            {"player_id", std::to_string(r.player_id)},
+            {"room_id", std::to_string(r.room_id)},
+            {"token", r.token},
+            {"expire_at_ms", std::to_string(r.expire_at_ms)},
+            {"reason", r.reason.empty() ? "unknown_error" : r.reason}
+        });
+        return true;
+    });
+
     dispatcher_.Register(MSG_PLAYER_ACTION_REQ, [this](const Packet& request, Packet& response, int64_t connection_id) {
         response.msg_id = MSG_PLAYER_ACTION_RESP;
         response.seq_id = request.seq_id;
@@ -346,14 +421,20 @@ void GameServer::RegisterHandlers() {
 
         const auto sender_player_id = session_manager_.GetPlayerIdByConnection(connection_id);
         if (!sender_player_id.has_value()) {
-            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::NOT_LOGIN))}});
+            response.body = BuildKvBody({
+                {"code", std::to_string(static_cast<int32_t>(ErrorCode::NOT_LOGIN))},
+                {"reason", "not_login"}
+            });
             return true;
         }
         response.player_id = sender_player_id.value();
 
         const auto kv = ParseKvBody(request.body);
         if (kv.find("room_id") == kv.end() || kv.find("action_type") == kv.end()) {
-            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+            response.body = BuildKvBody({
+                {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                {"reason", "invalid_packet"}
+            });
             return true;
         }
 
@@ -363,11 +444,17 @@ void GameServer::RegisterHandlers() {
             room_id = std::stoll(kv.at("room_id"));
             action_type = static_cast<int32_t>(std::stoll(kv.at("action_type")));
         } catch (...) {
-            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+            response.body = BuildKvBody({
+                {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                {"reason", "invalid_packet"}
+            });
             return true;
         }
         if (room_id <= 0 || action_type <= 0) {
-            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+            response.body = BuildKvBody({
+                {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                {"reason", "invalid_packet"}
+            });
             return true;
         }
 
@@ -376,41 +463,62 @@ void GameServer::RegisterHandlers() {
         if (action_req.action_type == PlayerActionType::CallScore) {
             auto it = kv.find("score");
             if (it == kv.end()) {
-                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                response.body = BuildKvBody({
+                    {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                    {"reason", "invalid_packet"}
+                });
                 return true;
             }
             try {
                 action_req.call_score = static_cast<int32_t>(std::stoll(it->second));
             } catch (...) {
-                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                response.body = BuildKvBody({
+                    {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                    {"reason", "invalid_packet"}
+                });
                 return true;
             }
         } else if (action_req.action_type == PlayerActionType::RobLandlord) {
             auto it = kv.find("rob");
             if (it == kv.end()) {
-                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                response.body = BuildKvBody({
+                    {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                    {"reason", "invalid_packet"}
+                });
                 return true;
             }
             try {
                 action_req.rob = static_cast<int32_t>(std::stoll(it->second));
             } catch (...) {
-                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                response.body = BuildKvBody({
+                    {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                    {"reason", "invalid_packet"}
+                });
                 return true;
             }
         } else if (action_req.action_type == PlayerActionType::PlayCards) {
             auto it = kv.find("cards");
             if (it == kv.end()) {
-                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                response.body = BuildKvBody({
+                    {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                    {"reason", "invalid_packet"}
+                });
                 return true;
             }
             bool parse_ok = false;
             action_req.cards = ParseCardList(it->second, &parse_ok);
             if (!parse_ok) {
-                response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+                response.body = BuildKvBody({
+                    {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                    {"reason", "invalid_packet"}
+                });
                 return true;
             }
         } else if (action_req.action_type != PlayerActionType::Pass) {
-            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+            response.body = BuildKvBody({
+                {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+                {"reason", "invalid_packet"}
+            });
             return true;
         }
 
@@ -418,7 +526,10 @@ void GameServer::RegisterHandlers() {
         const auto action_result = room_manager_.ApplyPlayerAction(
             room_id, sender_player_id.value(), action_req, &action_err);
         if (!action_result.has_value()) {
-            response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PLAYER_STATE))}});
+            response.body = BuildKvBody({
+                {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PLAYER_STATE))},
+                {"reason", NormalizeActionReason(action_err)}
+            });
             return true;
         }
 
@@ -450,6 +561,7 @@ void GameServer::RegisterHandlers() {
 
         response.body = BuildKvBody({
             {"code", std::to_string(static_cast<int32_t>(action_code))},
+            {"reason", action_code == ErrorCode::OK ? "ok" : "settlement_failed"},
             {"room_id", std::to_string(snapshot.room_id)},
             {"room_state", std::to_string(snapshot.room_state)},
             {"current_operator_player_id", std::to_string(snapshot.current_operator_player_id)},
@@ -468,7 +580,10 @@ void GameServer::RegisterHandlers() {
         response.msg_id = MSG_SETTLEMENT_RESP;
         response.seq_id = request.seq_id;
         response.player_id = request.player_id;
-        response.body = BuildKvBody({{"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))}});
+        response.body = BuildKvBody({
+            {"code", std::to_string(static_cast<int32_t>(ErrorCode::INVALID_PACKET))},
+            {"reason", "invalid_packet"}
+        });
         Logger::Instance().Warn("client settlement request rejected; settlement must be server authoritative");
         return true;
     });
@@ -559,10 +674,13 @@ void GameServer::TimerLoop() {
 void GameServer::OnMessage(int64_t connection_id, const Packet& packet) {
     const int64_t begin_ms = NowMs();
     const std::string trace_id = GenerateTraceId(connection_id, packet.seq_id);
+    const GatewayTraceFields gateway_trace = ParseGatewayTraceFields(packet.body);
     ObservabilityService::SetCurrentTraceId(trace_id);
     if (observability_.structured_log_enabled()) {
         Logger::Instance().Info(
             "event=request trace_id=" + trace_id +
+            " h5_request_id=" + (gateway_trace.h5_request_id.empty() ? "-" : gateway_trace.h5_request_id) +
+            " gateway_trace_id=" + (gateway_trace.gateway_trace_id.empty() ? "-" : gateway_trace.gateway_trace_id) +
             " conn_id=" + std::to_string(connection_id) +
             " msg_id=" + std::to_string(packet.msg_id) +
             " seq_id=" + std::to_string(packet.seq_id) +
@@ -580,9 +698,15 @@ void GameServer::OnMessage(int64_t connection_id, const Packet& packet) {
     Packet response;
     const bool need_reply = dispatcher_.Dispatch(packet, response, connection_id);
     if (need_reply && tcp_server_ != nullptr) {
+        AppendKvFieldIfMissing(&response.body, "h5_request_id", gateway_trace.h5_request_id);
+        AppendKvFieldIfMissing(&response.body, "gateway_trace_id", gateway_trace.gateway_trace_id);
+        AppendKvFieldIfMissing(&response.body, "server_trace_id", trace_id);
         if (observability_.structured_log_enabled()) {
             Logger::Instance().Info(
                 "event=response trace_id=" + trace_id +
+                " h5_request_id=" + (gateway_trace.h5_request_id.empty() ? "-" : gateway_trace.h5_request_id) +
+                " gateway_trace_id=" + (gateway_trace.gateway_trace_id.empty() ? "-" : gateway_trace.gateway_trace_id) +
+                " server_trace_id=" + trace_id +
                 " conn_id=" + std::to_string(connection_id) +
                 " msg_id=" + std::to_string(response.msg_id) +
                 " seq_id=" + std::to_string(response.seq_id) +

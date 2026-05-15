@@ -18,6 +18,7 @@ int main() {
         const auto r = reconnect_service.HandleReconnect(
             2001, "player_id=1001;token=abc;room_id=0;last_snapshot_version=0", 1000);
         assert(r.code == ddz::ErrorCode::INVALID_TOKEN);
+        assert(r.reason == "invalid_token");
     }
 
     // 2) no session
@@ -26,6 +27,7 @@ int main() {
         const auto r = reconnect_service.HandleReconnect(
             2002, "player_id=9999;token=" + t.token + ";room_id=0;last_snapshot_version=0", 1001);
         assert(r.code == ddz::ErrorCode::NOT_LOGIN);
+        assert(r.reason == "not_login");
     }
 
     // 3) offline reconnect with room snapshot
@@ -44,6 +46,7 @@ int main() {
             "player_id=1001;token=" + token + ";room_id=" + std::to_string(room_id) + ";last_snapshot_version=1",
             1004);
         assert(r.code == ddz::ErrorCode::OK);
+        assert(r.reason == "ok");
         assert(r.player_id == 1001);
         assert(r.room_id == room_id);
         assert(!r.old_connection_to_kick.has_value());
@@ -64,6 +67,7 @@ int main() {
         const auto r = reconnect_service.HandleReconnect(
             4002, "player_id=2001;token=" + token + ";room_id=0;last_snapshot_version=0", 1011);
         assert(r.code == ddz::ErrorCode::OK);
+        assert(r.reason == "ok");
         assert(r.old_connection_to_kick.has_value());
         assert(r.old_connection_to_kick.value() == 4001);
         assert(session_manager.GetConnectionIdByPlayer(2001).value() == 4002);
@@ -76,6 +80,7 @@ int main() {
         const auto r = reconnect_service.HandleReconnect(
             5001, "player_id=2001;token=" + token + ";room_id=0;last_snapshot_version=0", 12001);
         assert(r.code == ddz::ErrorCode::TOKEN_EXPIRED);
+        assert(r.reason == "token_expired");
     }
 
     // 6) room mismatch
@@ -86,6 +91,7 @@ int main() {
         const auto r = reconnect_service.HandleReconnect(
             6002, "player_id=3001;token=" + token + ";room_id=999;last_snapshot_version=0", 1301);
         assert(r.code == ddz::ErrorCode::RECONNECT_ROOM_MISMATCH);
+        assert(r.reason == "room_mismatch");
     }
 
     // 7) snapshot version conflict returns latest snapshot
@@ -102,8 +108,34 @@ int main() {
             "player_id=4001;token=" + token + ";room_id=" + std::to_string(room_id) + ";last_snapshot_version=0",
             1402);
         assert(r.code == ddz::ErrorCode::SNAPSHOT_VERSION_CONFLICT);
+        assert(r.reason == "snapshot_version_conflict");
         assert(r.snapshot.has_value());
         assert(r.snapshot->snapshot_version > 0);
+    }
+
+    // 8) session refresh success
+    {
+        player_manager.UpsertPlayer(5001, "refresh_ok", 1000);
+        session_manager.BindLogin(5001, 8001, 2000);
+        session_manager.SetRoomId(5001, 55);
+        const auto old_token = auth.IssueSessionToken(5001, 2000).token;
+        const auto r = reconnect_service.HandleSessionRefresh(
+            "player_id=5001;token=" + old_token + ";room_id=55", 2001);
+        assert(r.code == ddz::ErrorCode::OK);
+        assert(r.reason == "ok");
+        assert(r.player_id == 5001);
+        assert(r.room_id == 55);
+        assert(!r.token.empty());
+        assert(r.expire_at_ms > 2001);
+    }
+
+    // 9) session refresh mismatch
+    {
+        const auto token = auth.IssueSessionToken(5001, 2000).token;
+        const auto r = reconnect_service.HandleSessionRefresh(
+            "player_id=5001;token=" + token + ";room_id=66", 2002);
+        assert(r.code == ddz::ErrorCode::RECONNECT_ROOM_MISMATCH);
+        assert(r.reason == "room_mismatch");
     }
 
     std::cout << "test_p3_reconnect_service passed" << std::endl;

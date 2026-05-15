@@ -218,7 +218,7 @@ ctest -C Debug --test-dir build --output-on-failure
 build/Debug/ddz_server.exe config/dev/server.yaml
 ```
 
-### H5 网关（P7 第一轮）
+### H5 网关（P7 第二轮）
 
 网关可执行：`ddz_gateway`（HTTP + WebSocket + 上游 TCP 转发）。
 
@@ -248,11 +248,31 @@ build/Debug/ddz_gateway.exe --config=config/dev/gateway.yaml
 - Body(JSON): `{"player_id":1001,"nickname":"alice"}`
 - Response(JSON): `code/player_id/login_ticket/expire_at_ms/message`
 
+会话续期接口：
+
+- `GET /api/session/refresh?player_id=<pid>&room_id=<rid>`
+- Header: `Authorization: Bearer <session_token>`
+- Response(JSON): `code/player_id/room_id/token/expire_at_ms/reason/gateway_trace_id/server_trace_id`
+
 WebSocket 接口：
 
 - `WS /ws/game`
 - 消息格式：JSON 信封，`body` 保持 KV 文本
 - 示例：`{"msg_id":1001,"seq_id":1,"player_id":0,"body":"login_ticket=...;nickname=alice"}`
+- 入站可选字段：`h5_request_id`
+- 出站附加字段：`h5_request_id/gateway_trace_id/server_trace_id`
+
+网关安全基线：
+
+- 强制 Origin 白名单（HTTP CORS + WS 握手）
+- 按 IP 的 HTTP QPS / WS 并发连接限流
+- 按连接 WS 消息频率限流并可临时封禁
+- 指标快照日志：`event=gateway_metrics_snapshot`
+
+TLS 说明：
+
+- 网关不直接终止 TLS，需由反向代理（Nginx/Caddy）提供 HTTPS/WSS
+- 参考 [runbooks/p7_gateway_tls_proxy_runbook.md](runbooks/p7_gateway_tls_proxy_runbook.md)
 
 ## 网络模型说明（P2）
 
@@ -315,6 +335,8 @@ ctest -C Debug --test-dir build -R p5_fault_drills --output-on-failure
 - `3003` `MSG_PLAYER_RECONNECT_NOTIFY`
 - `6001` `MSG_RECONNECT_REQ`
 - `6002` `MSG_RECONNECT_RESP`
+- `6103` `MSG_SESSION_REFRESH_REQ`
+- `6104` `MSG_SESSION_REFRESH_RESP`
 
 `MSG_PRIVATE_HAND_NOTIFY` 字段：
 
@@ -352,6 +374,21 @@ ctest -C Debug --test-dir build -R p5_fault_drills --output-on-failure
 - `last_snapshot_version`
 
 当客户端版本落后或冲突时，服务端返回 `SNAPSHOT_VERSION_CONFLICT` 并附最新快照，客户端可直接覆盖本地态。
+
+`MSG_SESSION_REFRESH_REQ` 字段：
+
+- `player_id`
+- `token`（会话 token）
+- `room_id`
+
+`MSG_SESSION_REFRESH_RESP` 字段：
+
+- `code/player_id/room_id/token/expire_at_ms`
+- `reason`（失败原因或 `ok`）
+
+兼容性说明：
+
+- 关键响应保持 `code` 不变，并新增 `reason` 字段用于细粒度错误定位（例如 `4002/6002/6104`）。
 
 匹配模式说明：
 

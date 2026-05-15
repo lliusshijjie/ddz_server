@@ -48,6 +48,8 @@ public:
     static constexpr uint32_t MSG_SETTLEMENT_RESP = 5003;
     static constexpr uint32_t MSG_RECONNECT_REQ = 6001;
     static constexpr uint32_t MSG_RECONNECT_RESP = 6002;
+    static constexpr uint32_t MSG_SESSION_REFRESH_REQ = 6103;
+    static constexpr uint32_t MSG_SESSION_REFRESH_RESP = 6104;
 
     GameServer() = default;
     ~GameServer();

@@ -4,6 +4,8 @@ gateway:
   upstream_host: 127.0.0.1
   upstream_port: 9000
   max_packet_size: 65536
+  heartbeat_timeout_ms: 30000
+  reconnect_backoff_ms: 1000
   dev_key: "dev_gateway_key"
 
 auth:
@@ -13,3 +15,17 @@ auth:
 log:
   level: info
   dir: ./logs
+
+security:
+  allowed_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"
+  max_ws_connections_per_ip: 64
+  max_ws_messages_per_sec: 60
+  max_http_qps_per_ip: 30
+  ban_seconds_on_abuse: 30
+  trust_x_forwarded_for: false
+
+observability:
+  enable_structured_log: true
+  metrics_report_interval_ms: 30000
