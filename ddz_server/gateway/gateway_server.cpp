@@ -131,8 +131,14 @@ http::response<http::string_body> MakeJsonResponse(
         response.set(http::field::access_control_allow_headers, "Authorization, Content-Type, X-Dev-Key");
     }
     response.keep_alive(keep_alive);
-    response.body() = body;
-    response.prepare_payload();
+    if (status == http::status::no_content || status == http::status::not_modified ||
+        (status >= http::status::continue_ && status < http::status::ok)) {
+        response.body().clear();
+        response.content_length(0);
+    } else {
+        response.body() = body;
+        response.prepare_payload();
+    }
     return response;
 }
 
@@ -521,17 +527,24 @@ void RunWebSocketProxy(
     std::mutex& security_mu,
     std::unordered_map<std::string, int64_t>& banned_until_ms_by_ip,
     GatewayObservabilityService* observability) {
+    std::string stage = "init";
+    try {
     beast::error_code ec;
+    stage = "create_ws_stream";
     websocket::stream<tcp::socket> ws(std::move(socket));
+    stage = "accept_upgrade";
     ws.accept(request, ec);
     if (ec) {
         return;
     }
+    stage = "set_ws_options";
+    websocket::stream_base::timeout timeout_opt =
+        websocket::stream_base::timeout::suggested(beast::role_type::server);
+    timeout_opt.handshake_timeout = websocket::stream_base::none();
+    timeout_opt.idle_timeout = websocket::stream_base::none();
+    timeout_opt.keep_alive_pings = false;
+    ws.set_option(timeout_opt);
     ws.text(true);
-    ws.next_layer().non_blocking(true, ec);
-    if (ec) {
-        return;
-    }
 
     observability->RecordWsConnectionOpened();
 
@@ -610,6 +623,7 @@ void RunWebSocketProxy(
     bool upstream_disconnect_notified = false;
     std::deque<int64_t> inbound_window_ms;
     while (true) {
+        stage = "flush_outbound";
         for (;;) {
             std::string next_msg;
             {
@@ -622,15 +636,21 @@ void RunWebSocketProxy(
             }
             ws.write(asio::buffer(next_msg), ec);
             if (ec) {
+                Logger::Instance().Warn("ws write failed client_ip=" + client_ip + " err=" + ec.message());
                 upstream.Close();
                 observability->RecordWsConnectionClosed();
                 return;
             }
         }
 
-        beast::flat_buffer buffer;
-        ws.read(buffer, ec);
-        if (ec == asio::error::would_block || ec == asio::error::try_again) {
+        stage = "poll_ws";
+        beast::error_code avail_ec;
+        const size_t available_bytes = ws.next_layer().available(avail_ec);
+        if (avail_ec) {
+            Logger::Instance().Warn("ws poll failed client_ip=" + client_ip + " err=" + avail_ec.message());
+            break;
+        }
+        if (available_bytes == 0) {
             if (!upstream.running()) {
                 if (!upstream_disconnect_notified) {
                     push_outbound(BuildGatewayErrorEnvelope(1, "upstream_disconnected", "upstream disconnected", "", "", ""));
@@ -640,10 +660,16 @@ void RunWebSocketProxy(
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
+
+        stage = "read_ws";
+        beast::flat_buffer buffer;
+        ws.read(buffer, ec);
         if (ec == websocket::error::closed) {
+            Logger::Instance().Info("ws closed by peer client_ip=" + client_ip);
             break;
         }
         if (ec) {
+            Logger::Instance().Warn("ws read failed client_ip=" + client_ip + " err=" + ec.message());
             break;
         }
 
@@ -664,6 +690,7 @@ void RunWebSocketProxy(
         }
         inbound_window_ms.push_back(now_ms);
 
+        stage = "parse_ws_payload";
         const std::string payload = beast::buffers_to_string(buffer.data());
         GatewayEnvelope envelope;
         std::string parse_err;
@@ -695,6 +722,7 @@ void RunWebSocketProxy(
         packet.player_id = envelope.player_id;
         packet.body = upstream_body;
 
+        stage = "send_upstream";
         std::string send_err;
         if (!upstream.SendPacket(packet, &send_err)) {
             push_outbound(BuildGatewayErrorEnvelope(
@@ -717,6 +745,15 @@ void RunWebSocketProxy(
     upstream.Close();
     ws.close(websocket::close_code::normal, ec);
     observability->RecordWsConnectionClosed();
+    } catch (const std::exception& ex) {
+        Logger::Instance().Error("RunWebSocketProxy exception stage=" + stage + " err=" + ex.what());
+        observability->RecordWsConnectionClosed();
+        throw;
+    } catch (...) {
+        Logger::Instance().Error("RunWebSocketProxy unknown exception stage=" + stage);
+        observability->RecordWsConnectionClosed();
+        throw;
+    }
 }
 
 void HandleGatewayConnection(
@@ -908,8 +945,28 @@ bool GatewayServer::Start(const std::string& config_path, std::string* err) {
         return false;
     }
 
-    accept_thread_ = std::thread(&GatewayServer::AcceptLoop, this);
-    metrics_thread_ = std::thread(&GatewayServer::MetricsLoop, this);
+    accept_thread_ = std::thread([this]() {
+        try {
+            AcceptLoop();
+        } catch (const std::exception& ex) {
+            Logger::Instance().Error(std::string("gateway accept loop exception: ") + ex.what());
+            running_.store(false);
+        } catch (...) {
+            Logger::Instance().Error("gateway accept loop unknown exception");
+            running_.store(false);
+        }
+    });
+    metrics_thread_ = std::thread([this]() {
+        try {
+            MetricsLoop();
+        } catch (const std::exception& ex) {
+            Logger::Instance().Error(std::string("gateway metrics loop exception: ") + ex.what());
+            running_.store(false);
+        } catch (...) {
+            Logger::Instance().Error("gateway metrics loop unknown exception");
+            running_.store(false);
+        }
+    });
     Logger::Instance().Info(
         "gateway started listen=" + config_.listen_host + ":" + std::to_string(config_.listen_port) +
         " upstream=" + config_.upstream_host + ":" + std::to_string(config_.upstream_port));
@@ -987,15 +1044,21 @@ void GatewayServer::AcceptLoop() {
 
         std::lock_guard<std::mutex> lock(session_mu_);
         session_threads_.emplace_back([this, s = std::move(socket)]() mutable {
-            HandleGatewayConnection(
-                std::move(s),
-                config_,
-                &auth_token_service_,
-                &observability_,
-                security_mu_,
-                ws_conn_by_ip_,
-                http_rate_by_ip_,
-                banned_until_ms_by_ip_);
+            try {
+                HandleGatewayConnection(
+                    std::move(s),
+                    config_,
+                    &auth_token_service_,
+                    &observability_,
+                    security_mu_,
+                    ws_conn_by_ip_,
+                    http_rate_by_ip_,
+                    banned_until_ms_by_ip_);
+            } catch (const std::exception& ex) {
+                Logger::Instance().Error(std::string("gateway session exception: ") + ex.what());
+            } catch (...) {
+                Logger::Instance().Error("gateway session unknown exception");
+            }
         });
     }
 }
