@@ -25,9 +25,11 @@ jobs:
         run: cmake --build build --config Debug
 
       - name: Start Docker services
+        if: runner.os == 'Linux'
         run: docker compose up -d
 
       - name: Wait for Docker services
+        if: runner.os == 'Linux'
         shell: pwsh
         run: |
           $deadline = (Get-Date).AddMinutes(2)
