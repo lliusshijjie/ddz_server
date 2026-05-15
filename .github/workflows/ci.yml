@@ -24,6 +24,23 @@ jobs:
       - name: Build
         run: cmake --build build --config Debug
 
+      - name: Start Docker services
+        run: docker compose up -d
+
+      - name: Wait for Docker services
+        shell: pwsh
+        run: |
+          $deadline = (Get-Date).AddMinutes(2)
+          while ((Get-Date) -lt $deadline) {
+            $mysql = docker inspect -f "{{.State.Health.Status}}" ddz_mysql 2>$null
+            $redis = docker inspect -f "{{.State.Health.Status}}" ddz_redis 2>$null
+            if ($mysql -eq "healthy" -and $redis -eq "healthy") {
+              exit 0
+            }
+            Start-Sleep -Seconds 5
+          }
+          throw "Docker services did not become healthy within 2 minutes"
+
       - name: Test
         run: ctest -C Debug --test-dir build --output-on-failure
 
@@ -39,4 +56,3 @@ jobs:
           name: perf-${{ matrix.os }}
           path: build/artifacts/perf/*
           if-no-files-found: ignore
-
