@@ -115,6 +115,13 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
         running_.store(false);
         return false;
     }
+    if (config_.server.io_threads <= 0) {
+        if (err != nullptr) {
+            *err = "invalid server.io_threads, must be > 0";
+        }
+        running_.store(false);
+        return false;
+    }
     if (config_.auth.token_ttl_seconds <= 0) {
         if (err != nullptr) {
             *err = "invalid auth.token_ttl_seconds, must be > 0";
@@ -156,7 +163,8 @@ bool GameServer::Start(const std::string& config_path, std::string* err) {
     auth_token_service_.Configure(config_.auth.token_secret, config_.auth.token_ttl_seconds);
     observability_.Configure(config_.observability.enable_structured_log, config_.observability.metrics_report_interval_ms);
     RegisterHandlers();
-    tcp_server_ = std::make_unique<TcpServer>(config_.server.host, config_.server.port, config_.server.max_packet_size);
+    tcp_server_ = std::make_unique<TcpServer>(
+        config_.server.host, config_.server.port, config_.server.max_packet_size, config_.server.io_threads);
     tcp_server_->SetMessageCallback([this](int64_t connection_id, const Packet& packet) { OnMessage(connection_id, packet); });
     tcp_server_->SetCloseCallback([this](int64_t connection_id) { OnConnectionClosed(connection_id); });
 

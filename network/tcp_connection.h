@@ -2,10 +2,9 @@
 
 #include <atomic>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <mutex>
-#include <thread>
+#include <string>
 #include <vector>
 
 #include "network/packet.h"
@@ -23,40 +22,36 @@ namespace ddz {
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
 public:
-    using MessageCallback = std::function<void(int64_t connection_id, const Packet&)>;
-    using CloseCallback = std::function<void(int64_t connection_id)>;
-
     TcpConnection(int64_t connection_id,
                   SocketHandle socket_handle,
-                  uint32_t max_packet_size,
-                  MessageCallback on_message,
-                  CloseCallback on_close);
+                  uint32_t max_packet_size);
 
     ~TcpConnection();
 
     void Start();
     void Stop();
     bool SendPacket(const Packet& packet);
+    bool ReadAvailablePackets(std::vector<Packet>* out_packets, bool* peer_closed, std::string* err);
 
     int64_t ConnectionId() const { return connection_id_; }
     int64_t LastHeartbeatMs() const { return last_heartbeat_ms_.load(); }
+    SocketHandle socket_handle() const { return socket_handle_; }
+    bool running() const { return running_.load(); }
     void TouchHeartbeat();
 
 private:
-    void ReadLoop();
+    bool SetNonBlocking(std::string* err);
     void CloseSocketInternal();
 
 private:
     int64_t connection_id_;
     SocketHandle socket_handle_;
     uint32_t max_packet_size_;
-    MessageCallback on_message_;
-    CloseCallback on_close_;
 
     std::atomic<bool> running_{false};
     std::atomic<int64_t> last_heartbeat_ms_{0};
-    std::thread read_thread_;
     std::mutex send_mu_;
+    std::mutex read_mu_;
     std::vector<uint8_t> read_buffer_;
 };
 

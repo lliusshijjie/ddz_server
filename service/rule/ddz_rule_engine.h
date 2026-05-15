@@ -15,7 +15,13 @@ enum class CardComboType {
     TriplePair = 5,
     Straight = 6,
     Bomb = 7,
-    Rocket = 8
+    Rocket = 8,
+    PairStraight = 9,
+    Plane = 10,
+    PlaneSingle = 11,
+    PlanePair = 12,
+    FourTwoSingles = 13,
+    FourTwoPairs = 14
 };
 
 struct CardCombo {
@@ -33,4 +39,3 @@ public:
 };
 
 }  // namespace ddz
-

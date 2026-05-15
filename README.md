@@ -9,6 +9,7 @@
 - P6：MySQL DAO 与结算事务、Redis token/session/online 接入
 - P5（本次）：可观测埋点、压测脚本、CI 门禁、故障演练测试
 - P0 安全收敛：登录改为 `login_ticket` 验签；房间内重复登录按“登录即重连”处理；当前关闭四人场（仅支持 `mode=3`）
+- P2 工程改进：网络层改为固定 `io_threads` 线程池模型（不再每连接一线程）；规则引擎新增连对/飞机/四带二等常用牌型识别与比较
 
 ## 环境要求
 
@@ -25,6 +26,12 @@ cmake --build build --config Debug
 ctest -C Debug --test-dir build --output-on-failure
 build/Debug/ddz_server.exe config/dev/server.yaml
 ```
+
+## 网络模型说明（P2）
+
+- `server.io_threads` 已生效：采用“accept 线程 + 固定 IO worker”模型
+- 每个连接由 worker 驱动读包与解包，不再为每个连接单独创建读线程
+- 业务消息分发与会话语义保持兼容
 
 ## P5 工程化命令
 
@@ -65,6 +72,11 @@ ctest -C Debug --test-dir build -R p5_fault_drills --output-on-failure
 - `5001` `MSG_GAME_OVER_NOTIFY`
 
 说明：`5002 MSG_SETTLEMENT_REQ` 已禁止客户端权威结算，服务端只接受内部自动结算链路。
+
+规则引擎当前覆盖牌型（P2 更新）：
+
+- 基础：单张、对子、三张、三带一、三带二、顺子、炸弹、王炸
+- 扩展：连对、飞机（不带/带单/带对）、四带二（单/对）
 
 关键 P3 消息：
 

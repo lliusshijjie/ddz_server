@@ -34,8 +34,29 @@ void TestAnalyze() {
     auto c8 = DdzRuleEngine::Analyze({52, 53});
     assert(c8.valid && c8.type == CardComboType::Rocket);
 
+    auto c9 = DdzRuleEngine::Analyze({0, 13, 1, 14, 2, 15});
+    assert(c9.valid && c9.type == CardComboType::PairStraight);
+
+    auto c10 = DdzRuleEngine::Analyze({0, 13, 26, 1, 14, 27});
+    assert(c10.valid && c10.type == CardComboType::Plane);
+
+    auto c11 = DdzRuleEngine::Analyze({0, 13, 26, 1, 14, 27, 6, 20});
+    assert(c11.valid && c11.type == CardComboType::PlaneSingle);
+
+    auto c12 = DdzRuleEngine::Analyze({0, 13, 26, 1, 14, 27, 6, 19, 7, 20});
+    assert(c12.valid && c12.type == CardComboType::PlanePair);
+
+    auto c13 = DdzRuleEngine::Analyze({0, 13, 26, 39, 8, 9});
+    assert(c13.valid && c13.type == CardComboType::FourTwoSingles);
+
+    auto c14 = DdzRuleEngine::Analyze({0, 13, 26, 39, 8, 21, 9, 22});
+    assert(c14.valid && c14.type == CardComboType::FourTwoPairs);
+
     auto bad = DdzRuleEngine::Analyze({0, 1});
     assert(!bad.valid);
+
+    auto bad_pair_straight = DdzRuleEngine::Analyze({0, 13, 1, 14, 2, 16});
+    assert(!bad_pair_straight.valid);
 }
 
 void TestCompare() {
@@ -58,6 +79,32 @@ void TestCompare() {
 
     auto rocket = DdzRuleEngine::Analyze({52, 53});
     assert(DdzRuleEngine::CanBeat(rocket, bomb));
+
+    auto pair_straight_low = DdzRuleEngine::Analyze({0, 13, 1, 14, 2, 15});
+    auto pair_straight_high = DdzRuleEngine::Analyze({1, 14, 2, 15, 3, 16});
+    assert(DdzRuleEngine::CanBeat(pair_straight_high, pair_straight_low));
+
+    auto plane_low = DdzRuleEngine::Analyze({0, 13, 26, 1, 14, 27});
+    auto plane_high = DdzRuleEngine::Analyze({1, 14, 27, 2, 15, 28});
+    assert(DdzRuleEngine::CanBeat(plane_high, plane_low));
+
+    auto plane_single_low = DdzRuleEngine::Analyze({0, 13, 26, 1, 14, 27, 6, 20});
+    auto plane_single_high = DdzRuleEngine::Analyze({1, 14, 27, 2, 15, 28, 6, 20});
+    assert(DdzRuleEngine::CanBeat(plane_single_high, plane_single_low));
+
+    auto plane_pair_low = DdzRuleEngine::Analyze({0, 13, 26, 1, 14, 27, 6, 19, 7, 20});
+    auto plane_pair_high = DdzRuleEngine::Analyze({1, 14, 27, 2, 15, 28, 6, 19, 7, 20});
+    assert(DdzRuleEngine::CanBeat(plane_pair_high, plane_pair_low));
+
+    auto four_two_singles_low = DdzRuleEngine::Analyze({0, 13, 26, 39, 8, 9});
+    auto four_two_singles_high = DdzRuleEngine::Analyze({1, 14, 27, 40, 8, 9});
+    assert(DdzRuleEngine::CanBeat(four_two_singles_high, four_two_singles_low));
+
+    auto four_two_pairs_low = DdzRuleEngine::Analyze({0, 13, 26, 39, 8, 21, 9, 22});
+    auto four_two_pairs_high = DdzRuleEngine::Analyze({1, 14, 27, 40, 8, 21, 9, 22});
+    assert(DdzRuleEngine::CanBeat(four_two_pairs_high, four_two_pairs_low));
+
+    assert(!DdzRuleEngine::CanBeat(plane_low, plane_single_low));
 }
 
 }  // namespace
@@ -68,4 +115,3 @@ int main() {
     std::cout << "test_p4_ddz_rule_engine passed" << std::endl;
     return 0;
 }
-
