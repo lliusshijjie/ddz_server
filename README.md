@@ -11,6 +11,197 @@
 - P0 安全收敛：登录改为 `login_ticket` 验签；房间内重复登录按“登录即重连”处理；当前关闭四人场（仅支持 `mode=3`）
 - P2 工程改进：网络层改为固定 `io_threads` 线程池模型（不再每连接一线程）；规则引擎新增连对/飞机/四带二等常用牌型识别与比较
 
+## 整体架构
+
+### 1) 组件总览（模块职责与调用关系）
+
+```mermaid
+flowchart LR
+    Client[Game Client]
+
+    subgraph Server[ddz_server.exe]
+        direction LR
+        Tcp[TcpServer<br/>连接接入/收发包/连接管理]
+        Disp[Dispatcher<br/>msg_id -> handler]
+        GS[GameServer<br/>启动装配/定时驱动/通知下发]
+
+        LoginSvc[LoginService]
+        ReconnSvc[ReconnectService]
+        MatchSvc[MatchService]
+        RoomMgr[RoomManager]
+        Rule[DdzRuleEngine]
+        SettleSvc[SettlementService]
+        SessMgr[SessionManager]
+        PlayerMgr[PlayerManager]
+        MatchMgr[MatchManager]
+        Obs[ObservabilityService]
+        Log[Logger]
+        Storage[StorageService]
+        RedisStore[RedisOptionalStore]
+        Auth[AuthTokenService]
+    end
+
+    subgraph Infra[External Infra]
+        MySQL[(MySQL)]
+        Redis[(Redis)]
+    end
+
+    Client -->|TCP Packet| Tcp
+    Tcp --> Disp
+    Disp --> LoginSvc
+    Disp --> ReconnSvc
+    Disp --> MatchSvc
+    Disp --> RoomMgr
+    Disp --> SettleSvc
+
+    GS --> Tcp
+    GS --> Disp
+    GS --> Obs
+    GS --> Log
+    GS --> MatchSvc
+    GS --> RoomMgr
+    GS --> SettleSvc
+    GS --> RedisStore
+
+    LoginSvc --> Auth
+    LoginSvc --> SessMgr
+    LoginSvc --> PlayerMgr
+    LoginSvc --> RedisStore
+
+    ReconnSvc --> Auth
+    ReconnSvc --> SessMgr
+    ReconnSvc --> PlayerMgr
+    ReconnSvc --> RoomMgr
+    ReconnSvc --> RedisStore
+
+    MatchSvc --> MatchMgr
+    MatchSvc --> RoomMgr
+    MatchSvc --> SessMgr
+    MatchSvc --> PlayerMgr
+
+    RoomMgr --> Rule
+
+    SettleSvc --> RoomMgr
+    SettleSvc --> SessMgr
+    SettleSvc --> PlayerMgr
+    SettleSvc --> Storage
+
+    Storage --> MySQL
+    RedisStore --> Redis
+```
+
+### 2) 线程与执行模型（P2）
+
+```mermaid
+flowchart TB
+    Main[GameServer Main Thread<br/>启动/装配/Stop]
+    Accept[Accept Thread<br/>accept新连接]
+    Timer[Timer Thread<br/>1s Tick: 心跳超时/匹配超时/托管/离线判负]
+
+    subgraph IO[IO Worker Pool (size = server.io_threads)]
+        W1[Worker #1]
+        W2[Worker #2]
+        WN[Worker #N]
+    end
+
+    Main --> Accept
+    Main --> Timer
+    Main --> IO
+    Accept -->|round-robin 分配连接| IO
+    W1 -->|ReadAvailablePackets + Decode| DispExec[Dispatcher Handler Execute]
+    W2 -->|ReadAvailablePackets + Decode| DispExec
+    WN -->|ReadAvailablePackets + Decode| DispExec
+    Timer --> DispExec
+```
+
+### 3) 核心业务链路（登录 -> 匹配 -> 对局 -> 结算）
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant N as TcpServer/IOWorker
+    participant D as Dispatcher
+    participant L as LoginService
+    participant A as AuthTokenService
+    participant S as SessionManager
+    participant P as PlayerManager
+    participant M as MatchService/MatchManager
+    participant R as RoomManager + RuleEngine
+    participant T as SettlementService
+    participant DB as StorageService(MySQL)
+
+    C->>N: MSG_LOGIN_REQ(login_ticket, nickname)
+    N->>D: Dispatch(1001)
+    D->>L: HandleLogin
+    L->>A: Verify(login_ticket, purpose=login)
+    L->>S: BindLogin
+    L->>P: Upsert/State
+    L-->>C: MSG_LOGIN_RESP(token, room_id, reconnect_mode,...)
+
+    C->>N: MSG_MATCH_REQ(mode=3)
+    N->>D: Dispatch(2001)
+    D->>M: HandleMatch
+    M->>R: CreateRoom(匹配成功后)
+    M-->>C: MSG_MATCH_RESP
+    R-->>C: MSG_MATCH_SUCCESS_NOTIFY
+
+    C->>N: MSG_PLAYER_ACTION_REQ(action_type,cards/score/rob)
+    N->>D: Dispatch(4001)
+    D->>R: ApplyPlayerAction
+    R->>R: DdzRuleEngine.Analyze/CanBeat
+    R-->>C: MSG_ROOM_STATE_PUSH
+
+    alt 游戏结束
+        D->>T: SettleByServerResult
+        T->>DB: PersistSettlementTransaction
+        T-->>C: MSG_GAME_OVER_NOTIFY / MSG_GAME_RESULT_PUSH
+    end
+```
+
+### 4) 状态与数据边界
+
+- `SessionManager`：连接与 `player_id`、`room_id` 绑定关系与在线状态。
+- `PlayerManager`：玩家运行态（Lobby/Matching/InRoom/Playing/Settlement）与内存金币。
+- `RoomManager`：房间权威状态机、出牌校验入口、快照生成、离线托管标记。
+- `SettlementService + StorageService`：服务端权威结算与事务持久化。
+- `RedisOptionalStore`：token/session/online 的可选外部状态存储。
+- `ObservabilityService + Logger`：请求结果、耗时、故障与指标快照。
+
+### 5) 异常与恢复路径（断线/重连/托管/离线判负）
+
+```mermaid
+flowchart TD
+    A[连接断开 OnConnectionClosed] --> B[SessionManager.MarkOffline]
+    B --> C[PlayerState -> Offline]
+    C --> D{是否在房间中?}
+    D -->|否| E[结束: 等待重新登录]
+    D -->|是| F[RoomManager.MarkPlayerOffline]
+    F --> G[开始离线计时]
+
+    G --> H{离线时长 >= 30s?}
+    H -->|是| I[进入托管 trustee=true]
+    H -->|否| J[继续等待]
+
+    I --> K{当前轮到该玩家?}
+    K -->|是| L[ApplyTrusteeAction 自动动作]
+    K -->|否| M[等待下一轮]
+
+    L --> N{是否触发 game_over?}
+    N -->|是| O[SettlementService 自动结算]
+    N -->|否| P[广播 RoomStatePush]
+
+    G --> Q{离线时长 >= 120s?}
+    Q -->|是| R[PickWinnerForOfflineLose]
+    R --> S[按超时判负触发结算]
+
+    T[玩家发起重连 MSG_RECONNECT_REQ] --> U[Verify session token]
+    U --> V{token有效且room匹配?}
+    V -->|否| W[返回 INVALID_TOKEN / ROOM_MISMATCH]
+    V -->|是| X[Session Rebind + 在线恢复]
+    X --> Y[下发 RoomSnapshotNotify]
+    Y --> Z[广播 PlayerReconnectNotify]
+```
+
 ## 环境要求
 
 - CMake >= 3.16
