@@ -42,7 +42,11 @@ int main() {
     disabled_cfg.enabled = false;
     assert(disabled_store.Init(disabled_cfg, &err));
     assert(!disabled_store.enabled());
-    assert(disabled_store.ValidateToken(9999, "fallback-allow"));
+    assert(!disabled_store.ValidateToken(9999, "fallback-allow"));
+    assert(disabled_store.StoreToken(1003, "token-1003", 1, &err));
+    assert(disabled_store.ValidateToken(1003, "token-1003"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    assert(!disabled_store.ValidateToken(1003, "token-1003"));
 
     std::cout << "test_p6_redis_optional_store passed" << std::endl;
     return 0;

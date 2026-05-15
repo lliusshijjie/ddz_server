@@ -82,6 +82,12 @@ add_executable(test_p1_login_service
 target_link_libraries(test_p1_login_service PRIVATE ddz_core)
 add_test(NAME p1_login_service COMMAND test_p1_login_service)
 
+add_executable(test_p1_auth_token_service
+    tests/p1/test_auth_token_service.cpp
+)
+target_link_libraries(test_p1_auth_token_service PRIVATE ddz_core)
+add_test(NAME p1_auth_token_service COMMAND test_p1_auth_token_service)
+
 add_executable(test_p2_match_manager
     tests/p2/test_match_manager.cpp
 )

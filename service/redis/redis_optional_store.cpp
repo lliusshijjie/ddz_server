@@ -93,10 +93,10 @@ bool RedisOptionalStore::ValidateToken(int64_t player_id, const std::string& tok
     if (!enabled_) {
         auto it = token_by_player_.find(player_id);
         if (it == token_by_player_.end()) {
-            return true;
+            return false;
         }
         if (IsExpired(it->second.expire_at_ms)) {
-            return true;
+            return false;
         }
         return it->second.token == token;
     }
