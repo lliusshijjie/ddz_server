@@ -12,7 +12,10 @@ int main() {
     cfg.enabled = true;
     cfg.port = 6379;
     std::string err;
-    assert(store.Init(cfg, &err));
+    if (!store.Init(cfg, &err)) {
+        std::cout << "test_p6_redis_optional_store skipped: redis unavailable: " << err << std::endl;
+        return 0;
+    }
     assert(store.enabled());
 
     store.SeedTokenForTesting(1001, "token-1001");
