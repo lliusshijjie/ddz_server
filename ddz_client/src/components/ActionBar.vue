@@ -12,34 +12,74 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="actions">
-    <button type="button" :disabled="loading" @click="emit('callScore', 1)">叫1分</button>
-    <button type="button" :disabled="loading" @click="emit('callScore', 2)">叫2分</button>
-    <button type="button" :disabled="loading" @click="emit('callScore', 3)">叫3分</button>
-    <button type="button" :disabled="loading" @click="emit('rob', true)">抢地主</button>
-    <button type="button" :disabled="loading" @click="emit('rob', false)">不抢</button>
-    <button type="button" :disabled="loading" @click="emit('play')">出牌</button>
-    <button type="button" :disabled="loading" @click="emit('pass')">过</button>
+  <div class="action-bar panel">
+    <div class="action-group call-group">
+      <button type="button" class="btn-chunky btn-blue" :disabled="loading" @click="emit('callScore', 1)">1 PT</button>
+      <button type="button" class="btn-chunky btn-blue" :disabled="loading" @click="emit('callScore', 2)">2 PT</button>
+      <button type="button" class="btn-chunky btn-blue" :disabled="loading" @click="emit('callScore', 3)">3 PT</button>
+    </div>
+    
+    <div class="divider"></div>
+    
+    <div class="action-group rob-group">
+      <button type="button" class="btn-chunky btn-red" :disabled="loading" @click="emit('rob', true)">ROB 👹</button>
+      <button type="button" class="btn-chunky btn-blue" :disabled="loading" @click="emit('rob', false)">PASS</button>
+    </div>
+    
+    <div class="divider"></div>
+    
+    <div class="action-group play-group">
+      <button type="button" class="btn-chunky btn-blue" :disabled="loading" @click="emit('pass')">PASS 🛑</button>
+      <button type="button" class="btn-chunky btn-gold play-btn" :disabled="loading" @click="emit('play')">PLAY CARDS 🃏</button>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.actions {
+.action-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px;
+  margin-top: 24px;
 }
 
-button {
-  border: 1px solid #c5bdd9;
-  background: #fff;
-  border-radius: 8px;
-  padding: 6px 10px;
-  cursor: pointer;
+.action-group {
+  display: flex;
+  gap: 12px;
 }
 
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
+.divider {
+  width: 2px;
+  height: 32px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 1px;
+}
+
+.play-btn {
+  padding-left: 32px;
+  padding-right: 32px;
+  font-size: 16px;
+  box-shadow: 0 0 15px rgba(255, 204, 0, 0.4), var(--shadow-chunky);
+}
+
+@media (max-width: 768px) {
+  .action-bar {
+    flex-direction: column;
+    gap: 20px;
+  }
+  .divider {
+    width: 80%;
+    height: 2px;
+  }
+  .action-group {
+    width: 100%;
+    justify-content: center;
+  }
+  .play-btn {
+    flex: 1;
+  }
 }
 </style>

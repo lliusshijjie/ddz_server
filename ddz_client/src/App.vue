@@ -21,22 +21,26 @@ function logout() {
 
 <template>
   <div class="layout">
-    <header class="header">
-      <div class="brand">ddz_client MVP</div>
+    <header class="header panel">
+      <div class="brand">♠ DOU DIZHU ♣</div>
       <nav class="nav">
-        <RouterLink to="/login">登录</RouterLink>
-        <RouterLink to="/lobby">大厅</RouterLink>
-        <RouterLink to="/room">房间</RouterLink>
-        <RouterLink to="/settlement">结算</RouterLink>
-        <RouterLink to="/debug">调试</RouterLink>
+        <RouterLink to="/login" class="nav-link">登录 LOGIN</RouterLink>
+        <RouterLink to="/lobby" class="nav-link">大厅 LOBBY</RouterLink>
+        <RouterLink to="/room" class="nav-link">房间 ROOM</RouterLink>
+        <RouterLink to="/settlement" class="nav-link">结算 STATS</RouterLink>
+        <RouterLink to="/debug" class="nav-link">调试 DEBUG</RouterLink>
       </nav>
       <div class="right">
-        <span>WS: {{ debugStore.wsStatus }}</span>
-        <span v-if="authStore.loggedIn">PID: {{ authStore.playerId }}</span>
-        <button type="button" @click="logout">退出</button>
+        <span class="status-badge" :class="debugStore.wsStatus === 'OPEN' ? 'online' : 'offline'">
+          <span class="dot"></span> WS
+        </span>
+        <span v-if="authStore.loggedIn" class="player-badge">
+          ID: <strong>{{ authStore.playerId }}</strong>
+        </span>
+        <button type="button" class="btn-chunky btn-red logout-btn" @click="logout">退出 EXT</button>
       </div>
     </header>
-    <main>
+    <main class="main-content">
       <RouterView />
       <ToastMessage :text="debugStore.message" type="info" />
       <ToastMessage :text="sessionStore.error" type="error" />
@@ -47,60 +51,122 @@ function logout() {
 <style scoped>
 .layout {
   min-height: 100vh;
-  background: #f4f2f9;
+  display: flex;
+  flex-direction: column;
 }
 
 .header {
+  margin: 16px;
+  border-radius: 16px;
   position: sticky;
-  top: 0;
-  z-index: 1;
+  top: 16px;
+  z-index: 100;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid #ddd7ec;
-  padding: 12px 16px;
+  padding: 12px 24px;
 }
 
 .brand {
   font-weight: 700;
-  color: #4d3c86;
+  font-size: 20px;
+  color: var(--color-accent-gold);
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  letter-spacing: 1px;
 }
 
 .nav {
   display: flex;
-  gap: 10px;
-  font-size: 13px;
+  gap: 12px;
 }
 
-.nav a {
-  color: #54408e;
+.nav-link {
+  color: var(--color-text-secondary);
   text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.nav-link:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.nav-link.router-link-active {
+  color: var(--color-accent-gold);
+  background: rgba(255, 204, 0, 0.15);
 }
 
 .right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+}
+
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-}
-
-button {
-  border: 1px solid #bbb2d1;
-  border-radius: 6px;
-  background: #fff;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.5);
   padding: 4px 10px;
-  cursor: pointer;
+  border-radius: 20px;
+  border: 1px solid var(--color-panel-border);
 }
 
-main {
-  padding: 0 12px 20px;
+.status-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4757;
+  box-shadow: 0 0 8px #ff4757;
 }
 
-@media (max-width: 860px) {
+.status-badge.online .dot {
+  background: #2ed573;
+  box-shadow: 0 0 8px #2ed573;
+}
+
+.player-badge {
+  font-size: 13px;
+  background: rgba(59, 130, 246, 0.2);
+  border: 1px solid rgba(59, 130, 246, 0.5);
+  color: #a4c8ff;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+
+.player-badge strong {
+  color: #fff;
+}
+
+.logout-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.main-content {
+  flex: 1;
+  padding: 0 16px 32px;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 960px) {
   .header {
     flex-wrap: wrap;
+  }
+  .nav {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    margin-top: 8px;
   }
 }
 </style>

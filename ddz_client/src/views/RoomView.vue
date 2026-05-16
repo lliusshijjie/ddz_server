@@ -123,17 +123,28 @@ async function doPass() {
 
 <template>
   <div class="page">
-    <h2>房间 {{ roomStore.base.room_id || '-' }}</h2>
-    <div class="room-meta">
-      <div>房间状态：{{ roomStore.base.room_state }}</div>
-      <div>当前操作：{{ roomStore.base.current_operator_player_id }}</div>
-      <div>地主：{{ roomStore.base.landlord_player_id }}</div>
-      <div>倍数(base_coin)：{{ roomStore.base.base_coin }}</div>
-      <div>快照版本：{{ roomStore.base.snapshot_version }}</div>
-      <CountdownLabel :deadline-ms="roomStore.v2?.action_deadline_ms || roomStore.base.nearest_offline_deadline_ms" label="倒计时" />
+    <!-- Top Bar with Info -->
+    <div class="table-header panel">
+      <div class="header-left">
+        <div class="room-id">ROOM #{{ roomStore.base.room_id || '---' }}</div>
+        <div class="state-badge">{{ roomStore.base.room_state || 'WAITING' }}</div>
+      </div>
+      <div class="header-center">
+        <div class="multiplier">
+          <span>BASE COIN</span>
+          <span class="value">{{ roomStore.base.base_coin || 0 }} x</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <CountdownLabel 
+          :deadline-ms="roomStore.v2?.action_deadline_ms || roomStore.base.nearest_offline_deadline_ms" 
+          label="TIME" 
+        />
+      </div>
     </div>
 
-    <div class="seats">
+    <!-- Opponents Section -->
+    <div class="opponents-area">
       <OpponentSeat
         v-for="(playerId, index) in players"
         :key="playerId || index"
@@ -146,77 +157,271 @@ async function doPass() {
       />
     </div>
 
-    <div class="last-play">
-      <span>上一手玩家：{{ roomStore.v2?.last_play_player_id || 0 }}</span>
-      <span>上一手牌：{{ (roomStore.v2?.last_play_cards || []).join(',') || '-' }}</span>
-      <span>底牌：{{ (roomStore.v2?.landlord_bottom_cards || []).join(',') || '-' }}</span>
+    <!-- Center Play Area (Last played cards, bottom cards) -->
+    <div class="center-table panel">
+      <div class="table-section">
+        <span class="section-label">LAST PLAY (P{{ roomStore.v2?.last_play_player_id || '-' }})</span>
+        <div class="card-list">
+          <span v-if="!(roomStore.v2?.last_play_cards?.length)">NO CARDS</span>
+          <span v-for="card in roomStore.v2?.last_play_cards" :key="card" class="mini-card">{{ card }}</span>
+        </div>
+      </div>
+      
+      <div class="divider"></div>
+      
+      <div class="table-section">
+        <span class="section-label">BOTTOM CARDS</span>
+        <div class="card-list">
+          <span v-if="!(roomStore.v2?.landlord_bottom_cards?.length)">???</span>
+          <span v-for="card in roomStore.v2?.landlord_bottom_cards" :key="card" class="mini-card bottom-card">{{ card }}</span>
+        </div>
+      </div>
     </div>
 
-    <h3>我的手牌 ({{ roomStore.privateHand.cardCount }})</h3>
-    <HandCards :cards="roomStore.privateHand.cards" :selected-indexes="selectedIndexes" @toggle="toggleCard" />
-    <p class="selected">已选：{{ selectedCards.join(',') || '-' }}</p>
+    <!-- My Hand Area -->
+    <div class="my-hand-area">
+      <div class="hand-header">
+        <div class="my-turn-indicator" v-if="roomStore.base.current_operator_player_id === authStore.playerId">
+          👉 YOUR TURN! 👈
+        </div>
+        <div class="card-count">HAND CARDS: <span>{{ roomStore.privateHand.cardCount }}</span></div>
+      </div>
+      
+      <HandCards :cards="roomStore.privateHand.cards" :selected-indexes="selectedIndexes" @toggle="toggleCard" />
+    </div>
 
     <ActionBar :loading="sessionStore.busy" @call-score="doCallScore" @rob="doRob" @play="doPlay" @pass="doPass" />
 
-    <p v-if="roomStore.reconnectNoticePlayerId > 0" class="notice">
-      玩家 {{ roomStore.reconnectNoticePlayerId }} 已重连
-    </p>
-    <p v-if="actionError" class="error">{{ actionError }}</p>
-    <p v-if="sessionStore.error" class="error">{{ sessionStore.error }}</p>
+    <div class="notifications">
+      <div v-if="roomStore.reconnectNoticePlayerId > 0" class="toast-notice success">
+        ♻️ PLAYER {{ roomStore.reconnectNoticePlayerId }} RECONNECTED
+      </div>
+      <div v-if="actionError" class="toast-notice error">
+        ⚠️ {{ actionError }}
+      </div>
+      <div v-if="sessionStore.error" class="toast-notice error">
+        🛑 {{ sessionStore.error }}
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .page {
-  width: min(980px, 100%);
-  margin: 24px auto;
-  padding: 16px;
-  border: 1px solid #ddd7ec;
+  width: min(1000px, 100%);
+  margin: 16px auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Header */
+.table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 24px;
+}
+
+.header-left, .header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.room-id {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-accent-gold);
+}
+
+.state-badge {
+  background: rgba(255,255,255,0.1);
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.multiplier {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(0,0,0,0.5);
+  padding: 4px 16px;
   border-radius: 12px;
-  background: #fff;
+  border: 1px solid var(--color-accent-gold);
+  box-shadow: 0 0 10px rgba(255, 204, 0, 0.2);
 }
 
-.room-meta {
+.multiplier span:first-child {
+  font-size: 10px;
+  color: var(--color-accent-gold);
+}
+
+.multiplier .value {
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+}
+
+/* Opponents */
+.opponents-area {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 16px;
 }
 
-.seats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
+/* Center Table */
+.center-table {
+  display: flex;
+  justify-content: space-around;
+  padding: 24px;
+  background: rgba(0,0,0,0.3);
+  border-style: dashed;
 }
 
-.last-play {
+.table-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.section-label {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--color-text-secondary);
+  letter-spacing: 1px;
+  background: rgba(0,0,0,0.5);
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.card-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 12px;
-  color: #635d74;
+  gap: 6px;
+  justify-content: center;
+  min-height: 48px;
+  align-items: center;
 }
 
-.selected {
-  color: #4b4660;
+.mini-card {
+  background: #fff;
+  color: #000;
+  font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 2px solid #ccc;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
-.notice {
-  color: #175f38;
+.bottom-card {
+  border-color: var(--color-accent-gold);
 }
 
-.error {
-  color: #b02020;
+.divider {
+  width: 2px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 1px;
 }
 
-@media (max-width: 900px) {
-  .room-meta {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+/* My Hand Area */
+.my-hand-area {
+  margin-top: 24px;
+  position: relative;
+}
+
+.hand-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 16px;
+  margin-bottom: -10px;
+  z-index: 10;
+  position: relative;
+}
+
+.my-turn-indicator {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--color-accent-gold);
+  background: rgba(0,0,0,0.7);
+  padding: 4px 16px;
+  border-radius: 20px;
+  border: 2px solid var(--color-accent-gold);
+  animation: bounce 0.5s infinite alternate;
+}
+
+@keyframes bounce {
+  from { transform: translateY(0); }
+  to { transform: translateY(-8px); }
+}
+
+.card-count {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--color-text-secondary);
+  background: rgba(0,0,0,0.5);
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.card-count span {
+  color: #fff;
+  font-size: 18px;
+}
+
+/* Notifications */
+.notifications {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+}
+
+.toast-notice {
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  animation: slide-up 0.3s ease-out;
+}
+
+.toast-notice.success {
+  background: var(--color-accent-green);
+  color: #0b4a24;
+}
+
+.toast-notice.error {
+  background: var(--color-accent-red);
+  color: #fff;
+}
+
+@keyframes slide-up {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@media (max-width: 768px) {
+  .table-header {
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
   }
-
-  .seats {
+  .opponents-area {
     grid-template-columns: 1fr;
+  }
+  .my-turn-indicator {
+    font-size: 14px;
   }
 }
 </style>

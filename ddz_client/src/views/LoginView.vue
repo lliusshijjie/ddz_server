@@ -30,7 +30,7 @@ onMounted(async () => {
 async function submitLogin() {
   localError.value = ''
   if (playerId.value <= 0) {
-    localError.value = 'player_id 必须大于 0'
+    localError.value = 'PLAYER_ID 必须大于 0'
     return
   }
   try {
@@ -47,58 +47,113 @@ async function submitLogin() {
 </script>
 
 <template>
-  <div class="page">
-    <h2>DDZ H5 登录</h2>
-    <label>
-      player_id
-      <input v-model.number="playerId" type="number" min="1" />
-    </label>
-    <label>
-      nickname
-      <input v-model="nickname" type="text" placeholder="可选，默认 player_xxx" />
-    </label>
-    <button type="button" :disabled="sessionStore.busy" @click="submitLogin">
-      {{ sessionStore.busy ? '登录中...' : '登录并进入' }}
+  <div class="page panel login-panel">
+    <div class="login-header">
+      <div class="icon">🎰</div>
+      <h2>INSERT COIN</h2>
+    </div>
+    
+    <div class="form-group">
+      <label>PLAYER ID</label>
+      <input v-model.number="playerId" type="number" min="1" class="arcade-input" />
+    </div>
+    
+    <div class="form-group">
+      <label>NICKNAME (OPTIONAL)</label>
+      <input v-model="nickname" type="text" placeholder="player_xxx" class="arcade-input" />
+    </div>
+    
+    <button type="button" class="btn-chunky btn-gold login-btn" :disabled="sessionStore.busy" @click="submitLogin">
+      {{ sessionStore.busy ? 'LOADING...' : 'START GAME' }}
     </button>
-    <p v-if="localError" class="error">{{ localError }}</p>
+    
+    <div v-if="localError" class="error-msg">
+      ⚠️ {{ localError }}
+    </div>
   </div>
 </template>
 
 <style scoped>
 .page {
-  width: min(460px, 100%);
-  margin: 24px auto;
-  padding: 16px;
-  border: 1px solid #ddd7ec;
-  border-radius: 12px;
-  background: #fff;
-  display: grid;
-  gap: 12px;
+  width: min(400px, 100%);
+  margin: 40px auto;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,0.5));
+}
+
+h2 {
+  color: var(--color-accent-gold);
+  font-size: 28px;
+  letter-spacing: 2px;
+  text-shadow: 0 4px 0 rgba(0,0,0,0.3);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 label {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 1px;
 }
 
-input {
-  border: 1px solid #c9c1db;
-  border-radius: 8px;
-  padding: 8px;
-}
-
-button {
-  border: 1px solid #7562d3;
-  background: #7562d3;
+.arcade-input {
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid var(--color-panel-border);
+  border-radius: 12px;
+  padding: 14px 16px;
   color: #fff;
-  border-radius: 8px;
-  padding: 8px;
-  cursor: pointer;
+  font-family: var(--font-main);
+  font-size: 18px;
+  font-weight: 600;
+  transition: all 0.2s;
+  box-shadow: inset 0 4px 8px rgba(0,0,0,0.5);
 }
 
-.error {
-  color: #b02020;
-  margin: 0;
+.arcade-input:focus {
+  outline: none;
+  border-color: var(--color-accent-gold);
+  box-shadow: inset 0 4px 8px rgba(0,0,0,0.5), 0 0 12px rgba(255, 204, 0, 0.3);
+}
+
+.login-btn {
+  margin-top: 12px;
+  padding: 16px;
+  font-size: 20px;
+}
+
+.error-msg {
+  background: rgba(255, 71, 87, 0.15);
+  border: 1px solid var(--color-accent-red);
+  color: #ff8c96;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
 }
 </style>
